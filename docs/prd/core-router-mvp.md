@@ -53,7 +53,7 @@ The MVP ships two Skills: **summarise-link** (fetch a URL → distil to a short 
 
 ## Implementation Decisions
 
-- **Provider port** with an **OpenAI-compatible HTTP adapter**. Core method: "return a decision/text conforming to this schema." Implements **constrained decoding** via the runtime's grammar / JSON-schema support (llama.cpp `grammar` / `json_schema`; LM Studio `response_format`), with a fallback ladder: constrain → parse-and-repair → treat-as-answer (the last logged as a failure, never silent). Per ADR-0002.
+- **Provider port** with an **OpenAI-compatible HTTP adapter**. Core method: "return a decision/text conforming to this schema." Implements **constrained decoding via GBNF** (llama.cpp top-level `grammar`). The router spike found `response_format.json_schema`, llama.cpp `json_schema`, and `json_object` all return **empty** on the target build, so JSON-schema is **not** a usable constraint path; the adapter needs a **schema→GBNF compiler** to turn in-scope tool input schemas into grammars. Fallback ladder: constrain → parse-and-repair → treat-as-answer (the last logged as a failure, never silent). Re-probe LM Studio before assuming parity. Per ADR-0002. (Shape seeded by the spike's `provider.ts`.)
 - **Harness core**: the per-message pipeline **Route → Decide (bounded loop) → Voice** (ADR-0003) with **fixed-slot prompt assembly** — each call freshly built from bounded slots, no growing transcript. Decide emits *facts*; Voice emits the user-facing reply.
 - **Tool registry + Tool contract**: every Tool exposes name, description, input schema, `execute → result envelope`, and declarative metadata (`trust`, `risk`; forward-compatible `needsConfirmation` / `longRunning` declared but not implemented). The in-scope tools' input schemas generate the constrained-decoding grammar (ADR-0001, 0002).
 - **Result envelope**: uniform across tools — ok/exit, short summary, key lines, a pointer to full raw output, and a **`trust`** tag.
@@ -67,6 +67,19 @@ The MVP ships two Skills: **summarise-link** (fetch a URL → distil to a short 
 - **Security posture (ADR-0007)**: autonomy by default; the environment is the capability boundary; confirmation is an optional policy, off in MVP.
 - **Decision contract**: a small closed set of decision types — at minimum `route` (chat | task), `decide` (call a tool with args | finish), `voice` (free text) — each its own schema at its own call-site.
 - **Stack**: TypeScript; a standalone CLI entry point (the same core is later hosted by a daemon — out of scope here).
+
+## Tech Stack
+
+- **Language / runtime:** TypeScript on **Node 24**, running `.ts` directly (native TS) — no build step for dev; `tsc --noEmit` for typecheck.
+- **Package manager:** pnpm.
+- **Layout:** a single pnpm package; modules under `src/` (`provider/`, `harness/`, `tools/`, `skills/`, `config/`, `logging/`); no workspace yet.
+- **Tests:** Vitest.
+- **CLI:** no arg-parsing framework — hand-rolled `process.argv`; revisit only if the command surface grows.
+- **Constrained decoding:** GBNF grammars via llama.cpp `grammar`, plus a schema→GBNF compiler (see Implementation Decisions and ADR-0002).
+- **Provider interface (seed from the spike's `provider.ts`):** `decide({ baseUrl, model, system, user, grammar, maxTokens, timeoutMs }) → { ok, conformant, value, raw, ms }`.
+- **Tool registry shape:** `{ name, description, inputSchema, execute(args) → ResultEnvelope, meta: { trust, risk, … } }`; the in-scope tools' `inputSchema`s feed the schema→GBNF compiler.
+
+These are PRD constraints, not ADRs (reversible, conventional). The one ADR-level choice — GBNF over JSON-schema — lives in ADR-0002.
 
 ## Testing Decisions
 
@@ -84,7 +97,8 @@ Everything in [ARCHITECTURE.md](../../ARCHITECTURE.md) build-order steps 5–9 a
 
 ## Further Notes
 
-- **Build riskiest-first** ([ARCHITECTURE.md](../../ARCHITECTURE.md)): land the Provider + constrained decoding and prove a schema-conforming decision comes out of the local model *before* building the pipeline outward. The throwaway spike answers that go/no-go (does constrained decoding work? is routing accurate? is latency tolerable?) and should be run and recorded first.
-- **Constrained decoding is the lynchpin** (ADR-0002). If a backend cannot constrain, the reliability claim weakens — surface conformance rate prominently.
+- **Build riskiest-first** ([ARCHITECTURE.md](../../ARCHITECTURE.md)): land the Provider + constrained decoding and prove a schema-conforming decision comes out of the local model *before* building the pipeline outward. **Spike verdict (2026-06-18): all three bets cleared** — constrained decoding works via GBNF (JSON-schema returns empty on this build), routing 100/93/93% correct at 3/8/15 tools, ~0.8–1.3s per call (3-call pipeline ≈ 2.4–4s). Build proceeds.
+- **Constrained decoding is the lynchpin** (ADR-0002), and on the target llama.cpp build that means **GBNF specifically** (JSON-schema returns empty). If a backend cannot constrain, the reliability claim weakens — surface conformance rate prominently.
+- **Skill-narrowing is only weakly validated so far** (ADR-0004): the spike saw a 7-point accuracy gain on a single case. Treat the *speed* gain as solid, but re-run a larger/harder routing eval before relying on the accuracy gain (covered by the conformance-report + eval slice).
 - Reference hardware: AMD Ryzen 5 4600U / ~14 GB RAM, model `gemma-4-E4B` (Q4_K_M) at a 4096-token context. Context is small and host-variable — respect the budget in every slot.
 - Success is judged by real use + logs (conformance rate, loop length, latency), not a formal eval set.
