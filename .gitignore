@@ -24,3 +24,4 @@ desktop.ini
 
 # Local Claude Code settings (keep shared config, ignore personal overrides)
 .claude/settings.local.json
+.bin
