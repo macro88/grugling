@@ -10,6 +10,6 @@ Use /tdd where possible, at pre-agreed seams.
 
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.
 
-Once done, use /review to review the work.
+Once done, use /peer-review to review the work — the review is performed by the opposite CLI tool (if you are Claude, Codex reviews; if you are Codex, Claude reviews).
 
 Commit your work to the current branch.
