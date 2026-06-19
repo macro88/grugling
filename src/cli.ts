@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// grugling CLI — the walking skeleton (slice 1). One constrained model call
-// (Route) end-to-end, printing the conformant decision. Config + provider +
-// logging are wired here; the decision itself lives in the harness.
+// grugling CLI — a one-shot client onto the harness core (slice 2). Routes one
+// message (chat | task) and, for chat, replies in the SOUL persona via Voice.
+// Config + provider + logging + soul are wired here; the pipeline lives in the
+// harness.
 
 import { loadConfig } from "./config/config.ts";
-import { route } from "./harness/route.ts";
+import { handleMessage } from "./harness/pipeline.ts";
+import { loadSoul } from "./harness/soul.ts";
 import { createLogger } from "./logging/logger.ts";
 import { createLlamaCppProvider } from "./provider/llamacpp.ts";
 
@@ -16,25 +18,22 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const config = loadConfig();
+  const soul = loadSoul();
   const provider = createLlamaCppProvider({
     baseUrl: config.baseUrl,
     model: config.model,
     logger: createLogger(),
-    defaultMaxTokens: config.maxTokens,
+    defaultMaxTokens: config.decisionMaxTokens,
   });
 
-  const result = await route(provider, message);
+  const result = await handleMessage(provider, message, { soul, voiceMaxTokens: config.voiceMaxTokens });
 
-  if (!result.ok) {
-    process.stderr.write(`grug can't reach model at ${config.baseUrl} (${config.model}): ${result.error}\n`);
-    return 1;
-  }
-  if (!result.conformant) {
-    process.stderr.write(`grug got no usable decision (raw: ${JSON.stringify(result.raw)})\n`);
+  if (result.kind === "error") {
+    process.stderr.write(`grug broke: ${result.message}\n`);
     return 1;
   }
 
-  process.stdout.write(JSON.stringify(result.value) + "\n");
+  process.stdout.write(result.reply + "\n");
   return 0;
 }
 

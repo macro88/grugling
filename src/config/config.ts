@@ -9,7 +9,8 @@ import { parse as parseYaml } from "yaml";
 export interface ProfileConfig {
   baseUrl: string;
   model: string;
-  maxTokens: number;
+  decisionMaxTokens: number; // tokens per constrained decision (Route/Decide) — tiny
+  voiceMaxTokens: number; // tokens for a free-text Voice reply — host-sized
   contextBudget: number;
 }
 
@@ -24,7 +25,8 @@ export interface ConfigFile {
 export const DEFAULT_CONFIG: ProfileConfig = {
   baseUrl: "http://127.0.0.1:8080/v1",
   model: "gemma-4-E4B",
-  maxTokens: 64,
+  decisionMaxTokens: 64,
+  voiceMaxTokens: 256,
   contextBudget: 4096,
 };
 
@@ -46,7 +48,8 @@ export function resolveConfig(file: ConfigFile | null, env: NodeJS.ProcessEnv = 
   const fromEnv = stripUndefined({
     baseUrl: env.GRUGLING_BASE_URL,
     model: env.GRUGLING_MODEL,
-    maxTokens: envNumber("GRUGLING_MAX_TOKENS", env.GRUGLING_MAX_TOKENS),
+    decisionMaxTokens: envNumber("GRUGLING_DECISION_MAX_TOKENS", env.GRUGLING_DECISION_MAX_TOKENS),
+    voiceMaxTokens: envNumber("GRUGLING_VOICE_MAX_TOKENS", env.GRUGLING_VOICE_MAX_TOKENS),
     contextBudget: envNumber("GRUGLING_CONTEXT_BUDGET", env.GRUGLING_CONTEXT_BUDGET),
   });
   return { profile, ...DEFAULT_CONFIG, ...fromFile, ...fromEnv };
