@@ -14,6 +14,12 @@ desktop.ini
 *.swo
 *~
 
+# Dependencies
+node_modules/
+
+# Local hand-edited config (commit config.example.yaml instead)
+config.yaml
+
 # Logs
 *.log
 
