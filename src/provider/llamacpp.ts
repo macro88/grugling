@@ -65,7 +65,8 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
         const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
         const raw = json.choices?.[0]?.message?.content ?? "";
         const parsed = tryParse(raw);
-        const conformant = parsed !== null && typeof parsed === "object";
+        const isObject = parsed !== null && typeof parsed === "object";
+        const conformant = isObject && (args.conformsTo ? args.conformsTo(parsed) : true);
         result = { ok: true, conformant, value: conformant ? (parsed as T) : null, raw, ms };
       }
     } catch (e) {

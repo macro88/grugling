@@ -12,6 +12,11 @@ export interface DecideArgs {
   system?: string;
   // Names the call-site in the structured log (route | decide | voice | ...).
   callSite?: string;
+  // Verifies the parsed output actually conforms (e.g. enum membership) — the
+  // grammar's source schema, applied as a predicate so the port stays
+  // schema-agnostic. Output that parses but fails this is reported as
+  // non-conformant, never accepted silently (ADR-0002). Defaults to "any object".
+  conformsTo?: (value: unknown) => boolean;
   maxTokens?: number;
   timeoutMs?: number;
 }

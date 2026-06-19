@@ -1,2 +1,7 @@
+# Not a multi-package workspace (PRD: single package, "no workspace yet").
+# pnpm 11 moved build-script approval out of package.json into this file and
+# requires it here to allow esbuild's postinstall (a vitest dependency);
+# without it `pnpm install` exits non-zero and breaks `pnpm test` / typecheck.
+# No `packages:` key → no workspace members are defined.
 allowBuilds:
   esbuild: true

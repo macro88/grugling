@@ -42,6 +42,23 @@ function gbnfLiteral(value: string): string {
   return `"${escaped}"`;
 }
 
+// Whether a parsed value actually conforms to the decision schema: an object
+// with exactly the schema's keys, each holding one of that property's enum
+// values. The GBNF grammar enforces this *when the server honours it*; this
+// check is how the harness verifies it did — so out-of-vocabulary output (a
+// sign the grammar was ignored) is caught and logged as a failure, never
+// silently accepted (ADR-0002).
+export function matchesEnumSchema(schema: EnumDecisionSchema, value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(schema.properties);
+  if (Object.keys(obj).length !== keys.length) return false; // additionalProperties: false
+  return keys.every((key) => {
+    const v = obj[key];
+    return typeof v === "string" && schema.properties[key]!.enum.includes(v);
+  });
+}
+
 export function compileToGbnf(schema: EnumDecisionSchema): string {
   const keys = Object.keys(schema.properties);
   if (keys.length === 0) {

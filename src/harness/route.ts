@@ -2,7 +2,7 @@
 // task (CONTEXT.md). The walking skeleton's single constrained decision — it
 // also establishes the test seam (a scripted fake Provider drives this).
 
-import { compileToGbnf, enumDecisionSchema } from "../provider/gbnf.ts";
+import { compileToGbnf, enumDecisionSchema, matchesEnumSchema } from "../provider/gbnf.ts";
 import type { DecideResult, Provider } from "../provider/provider.ts";
 
 export const ROUTE_VALUES = ["chat", "task"] as const;
@@ -27,5 +27,6 @@ export function route(provider: Provider, message: string): Promise<DecideResult
     user: message,
     grammar: ROUTE_GRAMMAR,
     callSite: "route",
+    conformsTo: (v) => matchesEnumSchema(ROUTE_SCHEMA, v),
   });
 }

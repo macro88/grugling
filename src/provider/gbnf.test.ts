@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compileToGbnf, enumDecisionSchema } from "./gbnf.ts";
+import { compileToGbnf, enumDecisionSchema, matchesEnumSchema } from "./gbnf.ts";
 
 describe("compileToGbnf", () => {
   it("compiles a single closed-enum decision (the route grammar)", () => {
@@ -53,5 +53,26 @@ describe("compileToGbnf", () => {
 
   it("throws when a property has an empty enum", () => {
     expect(() => compileToGbnf(enumDecisionSchema("tool", []))).toThrow(/non-empty string enum/);
+  });
+});
+
+describe("matchesEnumSchema", () => {
+  const schema = enumDecisionSchema("route", ["chat", "task"]);
+
+  it("accepts an object whose value is in the enum", () => {
+    expect(matchesEnumSchema(schema, { route: "chat" })).toBe(true);
+    expect(matchesEnumSchema(schema, { route: "task" })).toBe(true);
+  });
+
+  it("rejects an out-of-vocabulary value (grammar-ignored output)", () => {
+    expect(matchesEnumSchema(schema, { route: "banana" })).toBe(false);
+  });
+
+  it("rejects extra keys, missing keys, and non-objects", () => {
+    expect(matchesEnumSchema(schema, { route: "chat", extra: 1 })).toBe(false);
+    expect(matchesEnumSchema(schema, {})).toBe(false);
+    expect(matchesEnumSchema(schema, "chat")).toBe(false);
+    expect(matchesEnumSchema(schema, null)).toBe(false);
+    expect(matchesEnumSchema(schema, ["chat"])).toBe(false);
   });
 });

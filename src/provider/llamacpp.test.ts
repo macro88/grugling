@@ -43,6 +43,27 @@ describe("createLlamaCppProvider", () => {
     expect(events[0]).toMatchObject({ event: "model_call", callSite: "route", ok: true, conformant: true });
   });
 
+  it("reports parseable-but-out-of-vocabulary output as non-conformant, not a decision", async () => {
+    const events: LogEvent[] = [];
+    const provider = createLlamaCppProvider({
+      baseUrl: "http://127.0.0.1:8080/v1",
+      model: "m",
+      fetchImpl: (async () => chatResponse('{"route":"banana"}')) as unknown as typeof fetch,
+      logger: { log: (e) => events.push(e) },
+    });
+    // Server replied (object parsed) but the value isn't in the enum — a sign the
+    // grammar was ignored. Must surface as a logged failure, never accepted.
+    const result = await provider.decide({
+      user: "x",
+      grammar: GRAMMAR,
+      conformsTo: (v) => (v as { route?: string }).route === "chat",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.conformant).toBe(false);
+    expect(result.value).toBeNull();
+    expect(events[0]).toMatchObject({ event: "model_call", ok: true, conformant: false });
+  });
+
   it("reports a non-2xx response as a transport failure, not a decision", async () => {
     const provider = createLlamaCppProvider({
       baseUrl: "http://127.0.0.1:8080/v1",

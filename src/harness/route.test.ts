@@ -29,5 +29,8 @@ describe("route", () => {
     expect(call.system).toBeTruthy();
     // The grammar constrains output to exactly the route enum.
     for (const v of ROUTE_VALUES) expect(call.grammar).toContain(`"\\"${v}\\""`);
+    // It also passes a validator so out-of-vocabulary output is caught as non-conformant.
+    expect(call.conformsTo?.({ route: "task" })).toBe(true);
+    expect(call.conformsTo?.({ route: "banana" })).toBe(false);
   });
 });
