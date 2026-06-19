@@ -2,8 +2,10 @@
 
 This is the hub that ties the design together. For precise vocabulary see
 [CONTEXT.md](CONTEXT.md); for the *why* behind each decision see the ADRs in
-[docs/adr/](docs/adr/). This document gives the whole-system picture and the MVP
-scope.
+[docs/adr/](docs/adr/); for the code-level design — module structure, the call
+pipeline and extension points, and the lifecycles — see
+[docs/design/code-design.md](docs/design/code-design.md). This document gives the
+whole-system picture and the MVP scope.
 
 Grugling is a brutally simple personal assistant for modest, spare hardware. The
 bet: a *small* local model can be a reliable **router/planner** if the

@@ -2,7 +2,9 @@
 
 A brutally simple personal assistant that treats a *small* local model as a
 **router/planner**, not the worker. See [CONTEXT.md](CONTEXT.md) for vocabulary,
-[ARCHITECTURE.md](ARCHITECTURE.md) for the design, and
+[ARCHITECTURE.md](ARCHITECTURE.md) for the design,
+[docs/design/code-design.md](docs/design/code-design.md) for the code-level
+design (structure, pipeline, lifecycles), and
 [docs/prd/core-router-mvp.md](docs/prd/core-router-mvp.md) for the MVP scope.
 
 ## Status
