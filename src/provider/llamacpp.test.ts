@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import type { LogEvent } from "../logging/logger.ts";
+import { createLogger, type LogEvent, LogLevel } from "../logging/logger.ts";
 import { createLlamaCppProvider } from "./llamacpp.ts";
+
+// A real logger wired to a capturing sink — exercises the actual level filtering
+// (and isEnabled) the provider relies on. Defaults to Info, like production.
+function recording(minLevel?: LogLevel) {
+  const events: LogEvent[] = [];
+  const logger = createLogger({ minLevel, sink: { write: (_level, event) => events.push(event) } });
+  return { events, logger };
+}
 
 function chatResponse(content: string): Response {
   return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
@@ -32,12 +40,12 @@ const GRAMMAR = `root ::= "{" ws "\\"route\\"" ws ":" ws val ws "}"\nval ::= "\\
 describe("createLlamaCppProvider", () => {
   it("drives llama.cpp with a top-level GBNF grammar and returns the parsed decision", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => chatResponse('{"route":"chat"}'));
-    const events: LogEvent[] = [];
+    const { events, logger } = recording();
     const provider = createLlamaCppProvider({
       baseUrl: "http://127.0.0.1:8080/v1/",
       model: "test-model",
       fetchImpl,
-      logger: { log: (e) => events.push(e) },
+      logger,
     });
 
     const result = await provider.decide({ user: "hi", system: "classify", grammar: GRAMMAR, callSite: "route" });
@@ -62,12 +70,12 @@ describe("createLlamaCppProvider", () => {
   });
 
   it("reports parseable-but-out-of-vocabulary output as non-conformant, not a decision", async () => {
-    const events: LogEvent[] = [];
+    const { events, logger } = recording();
     const provider = createLlamaCppProvider({
       baseUrl: "http://127.0.0.1:8080/v1",
       model: "m",
       fetchImpl: (async () => chatResponse('{"route":"banana"}')) as unknown as typeof fetch,
-      logger: { log: (e) => events.push(e) },
+      logger,
     });
     // Server replied (object parsed) but the value isn't in the enum — a sign the
     // grammar was ignored. Must surface as a logged failure, never accepted.
@@ -151,12 +159,12 @@ describe("createLlamaCppProvider", () => {
   });
 
   it("treats a length-truncated reply as a visible failure, not a silent partial", async () => {
-    const events: LogEvent[] = [];
+    const { events, logger } = recording();
     const provider = createLlamaCppProvider({
       baseUrl: "http://h/v1",
       model: "m",
       fetchImpl: (async () => fullResponse({ content: "grug half-", finishReason: "length" })) as unknown as typeof fetch,
-      logger: { log: (e) => events.push(e) },
+      logger,
     });
     const result = await provider.generate({ user: "hi" });
     expect(result.ok).toBe(false);
@@ -176,7 +184,7 @@ describe("createLlamaCppProvider", () => {
   });
 
   it("logs usage, cache hits, and throughput metrics", async () => {
-    const events: LogEvent[] = [];
+    const { events, logger } = recording();
     const provider = createLlamaCppProvider({
       baseUrl: "http://h/v1",
       model: "m",
@@ -186,7 +194,7 @@ describe("createLlamaCppProvider", () => {
           usage: { prompt_tokens: 207, completion_tokens: 12, prompt_tokens_details: { cached_tokens: 197 } },
           timings: { predicted_per_second: 28.4 },
         })) as unknown as typeof fetch,
-      logger: { log: (e) => events.push(e) },
+      logger,
     });
     await provider.generate({ user: "hi" });
     expect(events[0]).toMatchObject({
@@ -196,5 +204,56 @@ describe("createLlamaCppProvider", () => {
       cachedTokens: 197,
       tokensPerSecond: 28,
     });
+  });
+
+  it("attaches the full request and response to a decide event at Debug (verbose)", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => chatResponse('{"route":"chat"}'));
+    const { events, logger } = recording(LogLevel.Debug);
+    const provider = createLlamaCppProvider({ baseUrl: "http://h/v1", model: "m", fetchImpl, logger });
+    await provider.decide({ user: "hi", system: "classify", grammar: GRAMMAR, callSite: "route" });
+
+    expect(events[0]!.request).toMatchObject({
+      model: "m",
+      grammar: GRAMMAR,
+      messages: [
+        { role: "system", content: "classify" },
+        { role: "user", content: "hi" },
+      ],
+    });
+    expect(events[0]!.response).toMatchObject({ choices: [{ message: { content: '{"route":"chat"}' } }] });
+  });
+
+  it("omits request/response below Debug (the default Info path)", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => chatResponse('{"route":"chat"}'));
+    const { events, logger } = recording();
+    const provider = createLlamaCppProvider({ baseUrl: "http://h/v1", model: "m", fetchImpl, logger });
+    await provider.decide({ user: "hi", grammar: GRAMMAR });
+
+    expect(events[0]!.request).toBeUndefined();
+    expect(events[0]!.response).toBeUndefined();
+  });
+
+  it("captures the full request/response for a generate (Voice) call at Debug", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => fullResponse({ content: "grug say hi" }));
+    const { events, logger } = recording(LogLevel.Debug);
+    const provider = createLlamaCppProvider({ baseUrl: "http://h/v1", model: "m", fetchImpl, logger });
+    await provider.generate({ user: "hi", maxTokens: 200, temperature: 0.4 });
+
+    expect(events[0]!.request).toMatchObject({ max_tokens: 200, temperature: 0.4 });
+    expect(events[0]!.response).toMatchObject({ choices: [{ message: { content: "grug say hi" } }] });
+  });
+
+  it("at Debug, surfaces the request and error body on a failed call", async () => {
+    const { events, logger } = recording(LogLevel.Debug);
+    const provider = createLlamaCppProvider({
+      baseUrl: "http://h/v1",
+      model: "m",
+      fetchImpl: (async () => new Response("upstream boom", { status: 500 })) as unknown as typeof fetch,
+      logger,
+    });
+    await provider.decide({ user: "x", grammar: GRAMMAR });
+
+    expect(events[0]!.request).toMatchObject({ model: "m" });
+    expect(events[0]!.response).toBe("upstream boom"); // no JSON body; the error excerpt stands in
   });
 });

@@ -84,3 +84,93 @@ export function compileToGbnf(schema: EnumDecisionSchema): string {
 
   return [`root ::= ${root.join(" ")}`, ...rules, `ws ::= " "?`].join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// The Decide grammar (slice 3).
+//
+// Decide chooses, at each loop step, one of the in-scope tools (with its args)
+// or to finish (CONTEXT.md › Decide). The grammar is generated from the tools'
+// input schemas — adding a tool to the registry changes the grammar with no
+// harness edit (ADR-0001/0002). The decision JSON is one of:
+//   { "tool": "<name>", "args": { ... } }   — call a tool
+//   { "tool": "finish" }                     — stop and answer
+//
+// `args` is each tool's own enum-object input schema (the same shape Route uses,
+// reused per-tool). "finish" is reserved and can never be a tool name.
+
+export const FINISH = "finish";
+
+// The structural slice of a Tool the compiler needs — kept tool-agnostic so the
+// Provider layer never depends on the Tool contract (the arrow points one way:
+// tools → gbnf, never gbnf → tools).
+export interface ToolDecl {
+  name: string;
+  inputSchema: EnumDecisionSchema;
+}
+
+// GBNF for one tool's args object, named off `ref` so per-tool rules never
+// collide. An empty schema (a no-arg tool) compiles to the empty object `{}`.
+function argsRules(schema: EnumDecisionSchema, ref: string): string[] {
+  const keys = Object.keys(schema.properties);
+  if (keys.length === 0) return [`${ref} ::= "{" ws "}"`];
+
+  const valRules: string[] = [];
+  const obj: string[] = ['"{"', "ws"];
+  keys.forEach((key, j) => {
+    const prop = schema.properties[key];
+    if (prop?.type !== "string" || !Array.isArray(prop.enum) || prop.enum.length === 0) {
+      throw new Error(`compileDecideGrammar: arg "${key}" must be a non-empty string enum`);
+    }
+    const valRule = `${ref}-${j}`;
+    valRules.push(`${valRule} ::= ${prop.enum.map(gbnfLiteral).join(" | ")}`);
+    if (j > 0) obj.push('"," ws');
+    obj.push(gbnfLiteral(key), "ws", '":"', "ws", valRule, "ws");
+  });
+  obj.push('"}"');
+  return [`${ref} ::= ${obj.join(" ")}`, ...valRules];
+}
+
+export function compileDecideGrammar(tools: ToolDecl[]): string {
+  if (tools.length === 0) throw new Error("compileDecideGrammar: no tools in scope");
+  if (tools.some((t) => t.name === FINISH)) {
+    throw new Error(`compileDecideGrammar: "${FINISH}" is reserved and cannot be a tool name`);
+  }
+
+  const toolRules: string[] = [];
+  const branches: string[] = [];
+  tools.forEach((tool, i) => {
+    const argsRef = `arg-${i}`;
+    const toolRule = `tool-${i}`;
+    branches.push(toolRule);
+    toolRules.push(
+      `${toolRule} ::= "{" ws ${gbnfLiteral("tool")} ws ":" ws ${gbnfLiteral(tool.name)} ws "," ws ${gbnfLiteral("args")} ws ":" ws ${argsRef} ws "}"`,
+      ...argsRules(tool.inputSchema, argsRef),
+    );
+  });
+  branches.push(FINISH);
+
+  return [
+    `root ::= ${branches.join(" | ")}`,
+    ...toolRules,
+    `${FINISH} ::= "{" ws ${gbnfLiteral("tool")} ws ":" ws ${gbnfLiteral(FINISH)} ws "}"`,
+    `ws ::= " "?`,
+  ].join("\n");
+}
+
+// Whether a parsed Decide value actually conforms: either { tool: "finish" }
+// exactly, or { tool: <known tool>, args: <valid for that tool> }. This is how
+// the harness verifies the server honoured the grammar — out-of-vocabulary
+// output (a sign the grammar was ignored) is caught and logged as a failure,
+// never silently accepted (ADR-0002).
+export function matchesDecideSchema(tools: ToolDecl[], value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const obj = value as Record<string, unknown>;
+
+  if (obj.tool === FINISH) return Object.keys(obj).length === 1;
+
+  const tool = tools.find((t) => t.name === obj.tool);
+  if (!tool) return false;
+  const keys = Object.keys(obj);
+  if (keys.length !== 2 || !("args" in obj)) return false;
+  return matchesEnumSchema(tool.inputSchema, obj.args);
+}

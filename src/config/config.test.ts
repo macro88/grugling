@@ -28,6 +28,7 @@ describe("resolveConfig", () => {
       GRUGLING_VOICE_TEMPERATURE: "0.7",
       GRUGLING_REASONING: "true",
       GRUGLING_CONTEXT_BUDGET: "8192",
+      GRUGLING_LOOP_CAP: "8",
     });
     expect(cfg.profile).toBe("b");
     expect(cfg.model).toBe("from-b");
@@ -37,6 +38,7 @@ describe("resolveConfig", () => {
     expect(cfg.voiceTemperature).toBe(0.7);
     expect(cfg.reasoning).toBe(true);
     expect(cfg.contextBudget).toBe(8192);
+    expect(cfg.loopCap).toBe(8);
   });
 
   it("throws a clear error on a non-numeric numeric env var", () => {

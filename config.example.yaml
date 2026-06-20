@@ -8,6 +8,7 @@
 #   GRUGLING_VOICE_TEMPERATURE    sampling temperature at Voice (0 = deterministic)
 #   GRUGLING_REASONING            allow model-side reasoning (true/false)
 #   GRUGLING_CONTEXT_BUDGET       hard token ceiling for the host model
+#   GRUGLING_LOOP_CAP             max Decide iterations per task
 profile: default
 profiles:
   default:
@@ -18,3 +19,4 @@ profiles:
     voiceTemperature: 0 # 0 = deterministic; raise for a livelier persona
     reasoning: false # the harness is the planner; model "thinking" wastes the budget
     contextBudget: 4096 # sized to the host model's context window
+    loopCap: 5 # max Decide iterations per task; a confused model can't loop forever

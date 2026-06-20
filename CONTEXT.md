@@ -35,6 +35,18 @@ prompt and usually a schema its output must satisfy.
 **Route**:
 The cheap call-site that classifies an incoming message as chat or task.
 
+**Task**:
+A message some in-scope tool can help answer or carry out. What makes a message
+a task is that a tool applies — not its grammatical form: a question like "what
+is the time?" is a task whenever a tool can answer it. Routed into the Decision
+loop.
+
+**Chat**:
+A message grug answers as himself, needing no tool — a greeting, small talk, an
+opinion, or a question about who he is. Routed straight to Voice. (Distinct from
+the avoided sense under Session: here "chat" names a message category, never a
+stateful thread.)
+
 **Decide**:
 The call-site inside the decision loop that chooses the next tool (or to
 finish). Produces *facts*, never user-facing prose.
@@ -133,7 +145,29 @@ variables). Tools wield them internally and the model refers to them by handle;
 a redaction hook scrubs any that leak into context or logs.
 _Avoid_: secret management.
 
+### Observability
+
+**Structured log**:
+The JSONL stream of events the harness emits — one per model call and tool call —
+carrying metrics like constraint-conformance, token counts and latency. Each
+event has a severity *level*; a minimum-level filter decides what reaches the
+sink. Written to stderr so it never pollutes the CLI's stdout reply.
+_Avoid_: trace, audit log.
+
+**Verbose mode**:
+The `--verbose` debugging mode. It lowers the minimum log level to `Debug`, which
+enriches each `model_call` event with the full request sent to the model and the
+full response received. Opt-in, off by default.
+_Avoid_: debug flag, trace mode.
+
 ### Ports
+
+**Log sink**:
+The port a log event is written to. Its first adapter serialises events as JSONL
+to stderr; a structured-log backend could be another. The future redaction hook
+(ADR-0008) sits here, so one choke point scrubs every log line.
+_Avoid_: appender, transport, logger.
+
 
 **Provider**:
 The port through which the harness reaches a model. Its first adapter speaks the

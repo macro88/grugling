@@ -8,7 +8,7 @@
 // a lenient repair. A non-conformant result is reported (ok && !conformant),
 // never silently turned into a chat reply.
 
-import type { Logger } from "../logging/logger.ts";
+import { type LogEvent, type Logger, LogLevel } from "../logging/logger.ts";
 import type { DecideArgs, DecideResult, GenerateArgs, GenerateResult, Provider } from "./provider.ts";
 
 export interface LlamaCppOptions {
@@ -54,6 +54,22 @@ interface ChatOutcome {
   timings?: ChatTimings;
   ms: number;
   error?: string; // set when !ok
+  // The exact request body POSTed and the full parsed response — kept so verbose
+  // logging can surface what was sent and what came back (ADR-0010). `response`
+  // is set only on a 2xx with a JSON body.
+  request: Record<string, unknown>;
+  response?: unknown;
+}
+
+// Verbose enrichment (ADR-0010): when Debug is enabled, attach the full request
+// and full response to the event. Guarded by isEnabled so nothing is built
+// otherwise. On a failed call the request is the prime debugging signal; the
+// error body stands in for the (absent) response.
+function attachVerbose(logger: Logger | undefined, event: LogEvent, out: ChatOutcome): void {
+  if (!logger?.isEnabled(LogLevel.Debug)) return;
+  event.request = out.request;
+  const response = out.response ?? (out.errorBody || undefined);
+  if (response !== undefined) event.response = response;
 }
 
 // Metrics pulled from a response for the structured log (tokens, cache hits,
@@ -108,7 +124,7 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       const ms = performance.now() - start;
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        return { ok: false, content: "", errorBody: text.slice(0, 300), finishReason: "", ms, error: `HTTP ${res.status}` };
+        return { ok: false, content: "", errorBody: text.slice(0, 300), finishReason: "", ms, error: `HTTP ${res.status}`, request: body };
       }
       const json = (await res.json()) as {
         choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
@@ -124,13 +140,15 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
         usage: json.usage,
         timings: json.timings,
         ms,
+        request: body,
+        response: json,
       };
     } catch (e) {
       const ms = performance.now() - start;
       const err = e as Error & { cause?: unknown };
       const cause = err.cause instanceof Error ? `: ${err.cause.message}` : "";
       const error = err.name === "AbortError" ? `timed out after ${timeoutMs}ms` : `${err.message}${cause}`;
-      return { ok: false, content: "", errorBody: "", finishReason: "", ms, error };
+      return { ok: false, content: "", errorBody: "", finishReason: "", ms, error, request: body };
     } finally {
       clearTimeout(timer);
     }
@@ -149,7 +167,7 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       result = { ok: true, conformant, value: conformant ? (parsed as T) : null, raw: out.content, ms: out.ms };
     }
 
-    opts.logger?.log({
+    const event: LogEvent = {
       event: "model_call",
       callSite: args.callSite ?? "decide",
       model: opts.model,
@@ -159,7 +177,9 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       grammarBytes: args.grammar.length,
       ...metrics(out),
       ...(result.error ? { error: result.error } : {}),
-    });
+    };
+    attachVerbose(opts.logger, event, out);
+    opts.logger?.info(event);
 
     return result;
   }
@@ -181,7 +201,7 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       result = { ok: true, text: out.content, ms: out.ms };
     }
 
-    opts.logger?.log({
+    const event: LogEvent = {
       event: "model_call",
       callSite: args.callSite ?? "voice",
       model: opts.model,
@@ -189,7 +209,9 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       ok: result.ok,
       ...metrics(out),
       ...(result.error ? { error: result.error } : {}),
-    });
+    };
+    attachVerbose(opts.logger, event, out);
+    opts.logger?.info(event);
 
     return result;
   }
