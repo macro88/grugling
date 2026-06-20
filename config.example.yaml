@@ -3,12 +3,18 @@
 #   GRUGLING_PROFILE         which profile below to use (default: the `profile` key)
 #   GRUGLING_BASE_URL        OpenAI-compatible base URL
 #   GRUGLING_MODEL           model name
-#   GRUGLING_MAX_TOKENS      tokens per constrained decision
-#   GRUGLING_CONTEXT_BUDGET  hard token ceiling for the host model
+#   GRUGLING_DECISION_MAX_TOKENS  tokens per constrained decision (Route/Decide)
+#   GRUGLING_VOICE_MAX_TOKENS     tokens for a free-text Voice reply
+#   GRUGLING_VOICE_TEMPERATURE    sampling temperature at Voice (0 = deterministic)
+#   GRUGLING_REASONING            allow model-side reasoning (true/false)
+#   GRUGLING_CONTEXT_BUDGET       hard token ceiling for the host model
 profile: default
 profiles:
   default:
     baseUrl: http://127.0.0.1:8080/v1
     model: gemma-4-E4B
-    maxTokens: 64 # decisions are tiny; keep this small
+    decisionMaxTokens: 64 # Route/Decide are tiny; keep this small
+    voiceMaxTokens: 512 # a Voice reply needs more room than a decision; size to host
+    voiceTemperature: 0 # 0 = deterministic; raise for a livelier persona
+    reasoning: false # the harness is the planner; model "thinking" wastes the budget
     contextBudget: 4096 # sized to the host model's context window

@@ -9,8 +9,9 @@ design (structure, pipeline, lifecycles), and
 
 ## Status
 
-Slice 1 — the walking skeleton: a GBNF-constrained Provider reachable
-end-to-end from the CLI. One constrained model call (Route) per invocation.
+Slice 2 — the conversation entry path: a message is **Routed** (chat | task,
+GBNF-constrained). Chat flows to **Voice**, which replies in the editable
+`SOUL.md` persona; the task branch is stubbed until the Decide loop lands.
 
 ## Requirements
 
@@ -23,19 +24,26 @@ end-to-end from the CLI. One constrained model call (Route) per invocation.
 
 ```sh
 pnpm install
-pnpm grugling "hello there"        # → {"route":"chat"}
-pnpm grugling "summarise https://example.com"   # → {"route":"task"}
+pnpm grugling "hello there"        # → a terse grug reply (chat → Voice)
+pnpm grugling "summarise https://example.com"   # → task stub (Decide loop not built yet)
 ```
 
-One structured `model_call` event per call is written to stderr (JSONL); the
-decision goes to stdout.
+The reply goes to stdout; one structured `model_call` event per model call is
+written to stderr (JSONL). The persona lives in the editable `SOUL.md`, injected
+only at Voice.
 
 ## Configure
 
 Copy `config.example.yaml` to `config.yaml` and edit, or override per-field with
-env vars (`GRUGLING_BASE_URL`, `GRUGLING_MODEL`, `GRUGLING_MAX_TOKENS`,
+env vars (`GRUGLING_BASE_URL`, `GRUGLING_MODEL`, `GRUGLING_DECISION_MAX_TOKENS`,
+`GRUGLING_VOICE_MAX_TOKENS`, `GRUGLING_VOICE_TEMPERATURE`, `GRUGLING_REASONING`,
 `GRUGLING_CONTEXT_BUDGET`, `GRUGLING_PROFILE`, `GRUGLING_CONFIG`). Precedence:
 built-in defaults < selected profile in file < env.
+
+Token budgets and Voice temperature are sized to your host, not hardcoded.
+Model-side reasoning ("thinking") is **off by default** — on a small model it
+burns the output budget and latency for work the harness does deterministically
+(ADR-0009); set `reasoning: true` to re-enable per profile.
 
 ## Develop
 

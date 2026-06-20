@@ -20,14 +20,16 @@ already say it well, this links rather than repeats:
 Grugling is being built riskiest-thing-first, so most of the design exists on
 paper before it exists in `src/`. Every structural claim below is tagged:
 
-- 🟢 **Built** — code exists in `src/` today (slice 1, the walking skeleton).
+- 🟢 **Built** — code exists in `src/` today (slices 1–2).
 - 🟡 **Designed** — specified in the ADRs/PRD/ARCHITECTURE, not yet coded.
 
-The honest summary: **the Provider seam and one call-site (Route) are built; the
-rest of the pipeline, the ports, the tool/skill/hook machinery, and all
-persistence are designed.** The value of slice 1 is that it proves the riskiest
-bet — that a tiny local model returns a schema-conformant decision — through the
-exact seam everything else will hang off.
+The honest summary: **the Provider seam and the conversation entry path
+(Route → chat → Voice, with fixed-slot prompt assembly and the editable SOUL
+persona) are built; the task Decision loop, the tool/skill/hook machinery, the
+remaining ports, and all persistence are designed.** Slices 1–2 prove the two
+riskiest bets — that a tiny local model returns a schema-conformant decision, and
+that a chat round-trips through a terse persona reply — through the exact seams
+everything else hangs off.
 
 ---
 
@@ -73,15 +75,19 @@ under `src/`, grouped by role:
 
 ```
 src/
-├── cli.ts                  🟢 entry point — wires config + provider + logger, runs one Route
+├── cli.ts                  🟢 entry point — wires config + provider + soul + logger, runs the pipeline
 ├── provider/
-│   ├── provider.ts         🟢 the Provider PORT  (decide() interface + DecideArgs/DecideResult)
+│   ├── provider.ts         🟢 the Provider PORT  (decide() + generate(); their Args/Result types)
 │   ├── llamacpp.ts         🟢 the first ADAPTER  (OpenAI-compatible HTTP → llama.cpp, top-level GBNF)
 │   ├── gbnf.ts             🟢 schema → GBNF compiler (closed-enum decisions only, for now)
 │   └── *.test.ts           🟢 adapter + compiler tests
 ├── harness/
-│   ├── route.ts            🟢 the Route call-site (chat | task) — the one wired decision
-│   └── route.test.ts       🟢 drives the pipeline through a scripted fake Provider
+│   ├── pipeline.ts         🟢 the per-message pipeline: Route → chat=Voice | task=stub
+│   ├── route.ts            🟢 the Route call-site (chat | task) — constrained decision
+│   ├── voice.ts            🟢 the Voice call-site — free-text persona reply (generate())
+│   ├── prompt.ts           🟢 fixed-slot prompt assembly (assembleSystem)
+│   ├── soul.ts             🟢 loads the editable SOUL.md persona
+│   └── *.test.ts           🟢 drive the pipeline through a scripted fake Provider
 ├── config/
 │   ├── config.ts           🟢 profile loader: defaults < file profile < env
 │   └── config.test.ts
@@ -89,17 +95,26 @@ src/
     └── logger.ts           🟢 structured JSONL logging hook (stderr sink)
 ```
 
+(`SOUL.md` and `config.example.yaml` live at the repo root — the editable persona
+and the config template.)
+
 The dependency direction is strict and one-way — the arrow points *toward* the
 port, never toward an adapter:
 
 ```mermaid
 flowchart LR
-  cli["cli.ts"] --> route["harness/route.ts"]
+  cli["cli.ts"] --> pipeline["harness/pipeline.ts"]
   cli --> config["config/config.ts"]
+  cli --> soul["harness/soul.ts"]
   cli --> llamacpp["provider/llamacpp.ts"]
   cli --> logger["logging/logger.ts"]
-  route --> port["provider/provider.ts<br/>(Provider port)"]
+  pipeline --> route["harness/route.ts"]
+  pipeline --> voice["harness/voice.ts"]
+  pipeline --> port["provider/provider.ts<br/>(Provider port)"]
+  route --> port
   route --> gbnf["provider/gbnf.ts"]
+  voice --> port
+  voice --> prompt["harness/prompt.ts"]
   llamacpp -.implements.-> port
   llamacpp --> logger
   gbnf --> port
@@ -108,11 +123,12 @@ flowchart LR
   class port portStyle;
 ```
 
-Note what the Harness (`route.ts`) depends on: the **port** (`provider.ts`) and
-the **compiler** (`gbnf.ts`). It never imports `llamacpp.ts`. Only the
-composition root (`cli.ts`) knows which adapter is real. That is the whole
-ports-and-adapters discipline (ADR-0001) in miniature, and it is already load-bearing
-in slice 1.
+Note what the Harness (`pipeline.ts`, `route.ts`, `voice.ts`) depends on: the
+**port** (`provider.ts`), the **compiler** (`gbnf.ts`), and the **prompt
+assembler** (`prompt.ts`). It never imports `llamacpp.ts`. Only the composition
+root (`cli.ts`) knows which adapter is real — and binds the soul, logger, and
+config into it. That is the whole ports-and-adapters discipline (ADR-0001), and
+it is load-bearing across both built slices.
 
 ### 2.2 Where it grows 🟡
 
@@ -144,9 +160,13 @@ skeleton is small but already the right shape.
 
 | Module | Interface (what a caller must know) | Hidden behind it | Depth |
 |---|---|---|---|
-| **Provider** `provider.ts` 🟢 | `decide(args) → result`. One method. Inputs are *per-decision* (`user`, `grammar`, `system?`); `baseUrl`/`model` are bound at construction. | HTTP transport, timeout/abort, the GBNF constraint mechanism, the fallback ladder, JSON repair, logging. | **Deep.** A caller learns one verb and gets reliable structured decisions. |
+| **Provider** `provider.ts` 🟢 | Two verbs: `decide(args)` (constrained decision) and `generate(args)` (free-text reply). Inputs are *per-call* (`user`, `grammar` or `temperature`, `system?`); `baseUrl`/`model`/`reasoning` bind at construction. | HTTP transport, timeout/abort, the GBNF constraint mechanism, the fallback ladder, JSON repair, reasoning-disable, truncation detection, metrics logging. | **Deep.** A caller learns two verbs and gets reliable structured decisions *and* persona replies. |
 | **schema→GBNF compiler** `gbnf.ts` 🟢 | `enumDecisionSchema(...)` + `compileToGbnf(schema) → string`. | GBNF rule-name rules (the `_`-invalidates-the-grammar trap), JSON-literal escaping, root-rule assembly. | **Deep.** Callers describe a decision shape; grammar generation is none of their business. |
-| **Config** `config.ts` 🟢 | `loadConfig() → ResolvedConfig`; pure `resolveConfig(file, env)` underneath. | Precedence (defaults < profile < env), YAML parse, missing-file tolerance, env coercion/validation. | **Deep**, and split at an IO seam: the precedence logic is pure and trivially testable. |
+| **Pipeline** `pipeline.ts` 🟢 | `handleMessage(provider, message, opts) → result`. | Route→branch orchestration, error surfacing (route/voice failures never become silent chat), the task stub seam. | **Deep.** One entry point hides the whole per-message flow; the CLI and (future) daemon share it. |
+| **Voice** `voice.ts` 🟢 | `voice(provider, {soul, message, maxTokens, temperature})`. | Fixed-slot assembly of the persona + per-call-site fragment; the free-text `generate` call. | **Deep-ish.** The persona call-site behind one function; SOUL handling is its business, not the pipeline's. |
+| **Prompt assembly** `prompt.ts` 🟢 | `assembleSystem(...slots) → string`. | Fixed-order joining, empty-slot dropping, trimming — the "no growing transcript" discipline (ADR-0006). | Shallow-but-correct: a deliberate single choke point so every call-site assembles prompts the same way. |
+| **Config** `config.ts` 🟢 | `loadConfig() → ResolvedConfig`; pure `resolveConfig(file, env)` underneath. | Precedence (defaults < profile < env), YAML parse, missing-file tolerance, env coercion/validation (numbers *and* booleans). | **Deep**, and split at an IO seam: the precedence logic is pure and trivially testable. |
+| **Soul** `soul.ts` 🟢 | `loadSoul() → string`. | The single `SOUL.md` location; a loud error when absent (no silent empty persona). | Shallow-but-correct: the one place the persona file is read. |
 | **Logger** `logger.ts` 🟢 | `log(event)`. | JSONL serialisation; stderr-vs-injected sink (keeps stdout clean for the CLI result). | Shallow-but-correct: a one-method choke point, by design — it is also the first **Hook**. |
 
 **Seam discipline** (one adapter = hypothetical seam; two = real):
@@ -229,7 +249,7 @@ sequenceDiagram
     P-->>H: { route }
 
     alt route = chat
-        H->>P: Voice — turn intent into reply (SOUL.md)  🟡
+        H->>P: Voice — turn intent into reply (SOUL.md)  🟢
         P-->>H: reply text
     else route = task
         loop until "finish" or cap (bounded)  🟡
@@ -266,12 +286,20 @@ A call-site is a place the Harness invokes the model: a freshly assembled prompt
 |---|---|---|---|---|
 | **Route** | chat or task? | `{ route }` | fixed enum | 🟢 |
 | **Decide** | call a tool (with args) or finish | tool name + args, or `finish` | the **selected skill's in-scope tool input schemas** | 🟡 |
-| **Voice** | free-text reply | prose | unconstrained (the one free-text site) | 🟡 |
+| **Voice** | free-text reply | prose | unconstrained (the one free-text site) | 🟢 |
 | **Summarise / extract** | distil untrusted content to facts | facts | the **tool-less** trust-boundary site (§3.6) | 🟡 |
 | **Compact** | shrink running conversation | summary | conversation regime only | 🟡 |
 
-Adding a call-site means: define its schema, compile it to a grammar, call
-`provider.decide`. `route.ts` is the reference implementation — ~30 lines.
+There are **two kinds** of call-site, and the Provider port has a verb for each:
+
+- **Constrained decisions** (Route, Decide, summarise, compact) — define a
+  schema, compile it to a grammar, call `provider.decide`. Output is parsed and
+  conformance-checked. [`route.ts`](../../src/harness/route.ts) is the reference —
+  ~30 lines.
+- **Free-text Voice** — the deliberate exception (no schema, no grammar): call
+  `provider.generate`. [`voice.ts`](../../src/harness/voice.ts) is the reference.
+  It is the *only* unconstrained call-site, which is exactly why it is also the
+  only place the SOUL persona is injected.
 
 ### 3.4 Ports (the swappable seams) 🟡 (Provider 🟢)
 
@@ -280,7 +308,7 @@ depends on an optional adapter — there is always a dumb fallback** (ADR-0001).
 
 | Port | What the Harness needs | MVP adapter | Later | Status |
 |---|---|---|---|---|
-| **Provider** | "return a decision matching this grammar" | OpenAI-compatible HTTP + GBNF | other backends | 🟢 |
+| **Provider** | "return a decision matching this grammar" *and* "return a free-text reply" | OpenAI-compatible HTTP + GBNF, with model-side reasoning disabled by default | other backends | 🟢 |
 | **Memory** | "facts relevant to this context" (`core()` + `recall(query)`) | grep over markdown + index | SQL / vectors / semantic | 🟡 |
 | **Compression** | shrink *one tool's* output before context | deterministic (head/tail/grep/cap) | RTK, model-based | 🟡 |
 | **Compaction** | shrink the *running conversation* near budget | model-summarise; truncate fallback | smarter strategies | 🟡 |
@@ -348,7 +376,7 @@ rest are designed:
 
 | Hook | Fires when | Used for | Status |
 |---|---|---|---|
-| **logging** | every model call (later: tool call) | structured JSONL; headline = constraint-conformance rate | 🟢 |
+| **logging** | every model call (later: tool call) | structured JSONL; headline = constraint-conformance rate. Each event also carries `ms`, `finishReason`, prompt/completion/cached tokens, and tokens/sec — latency + context-budget pressure (user stories 19–21) | 🟢 |
 | **redaction** | content enters context *or* logs | scrub secrets — one choke point for both (ADR-0008) | 🟡 |
 | **postToolUse** | after a tool runs | compression, instrumentation | 🟡 |
 | **contextPressure** | running context nears the budget | trigger Compaction | 🟡 |
@@ -380,9 +408,10 @@ Four nested lifecycles, from longest-lived to shortest.
 
 ### 4.1 Process lifecycle
 
-- **CLI 🟢** — one-shot. `cli.ts`: parse argv → `loadConfig()` → construct
-  `Provider` (bind baseUrl/model/logger) → run one call-site → print decision to
-  stdout, structured event to stderr → exit code. No persistence, no loop.
+- **CLI 🟢** — one-shot. `cli.ts`: parse argv → `loadConfig()` + `loadSoul()` →
+  construct `Provider` (bind baseUrl/model/logger/reasoning) → `handleMessage` →
+  print the reply to stdout, structured events to stderr → exit code. No
+  persistence, no loop.
 - **Daemon 🟡** — long-lived. Boots, loads config, starts the messaging listener
   + internal ticker + harness, then serves. **All state lives on disk, so
   restarts resume cleanly.** Process supervision / auto-recovery is explicitly
@@ -391,9 +420,13 @@ Four nested lifecycles, from longest-lived to shortest.
 ### 4.2 Request lifecycle
 
 One inbound message → the pipeline in §3.2 → one reply. Cost: a chat is **2**
-model calls (Route, Voice); a task is **Route + Decide×N + Voice**. Accepted
-trade-off (ADR-0003): each call is small, constrained, and reliable, which
-matters more than round-trips on local inference. (Spike: ~0.8–1.3 s/call.)
+model calls (Route, Voice) — **built** 🟢; a task is **Route + Decide×N + Voice**
+— **designed** 🟡. Accepted trade-off (ADR-0003): each call is small, constrained,
+and reliable, which matters more than round-trips on local inference. (Spike:
+~0.8–1.3 s/call; observed on the reference box with reasoning **off**, Route
+~1–2.7 s and Voice ~1 s — with model-side reasoning *on*, a single call ran ~10 s
+and silently overran the reply budget, which is why reasoning is disabled by
+default — ADR-0009.)
 
 ### 4.3 Decision-loop iteration 🟡
 
@@ -436,6 +469,15 @@ grammar-shaped output) are *separate* flags. A non-conformant result is surfaced
 metric across runs is the **constraint-conformance rate** — did the model's
 output match the grammar first try?
 
+The **free-text Voice path** (`generate`) has no grammar and no conformance, but
+reports just as honestly 🟢: a reply truncated at the token budget
+(`finish_reason: "length"`) or an empty completion comes back as `ok: false` with
+a clear error — never a silent partial or blank `grug:` line. The most common
+cause of an empty completion is a **reasoning** model spending the whole output
+budget on a hidden chain-of-thought before emitting the reply; grugling disables
+model-side reasoning by default to prevent it (ADR-0009), and the structured log
+records `finishReason` + token counts so the failure is diagnosable.
+
 ### 4.5 Session lifecycle 🟡
 
 A **Session** is a TTL'd conversation thread (one JSON file per session,
@@ -463,6 +505,15 @@ env)` applies strict precedence: **built-in defaults < selected profile in file 
 env vars**. Resolution is a pure function (IO-free), so the precedence logic is
 tested without touching the filesystem. A box is re-pointed at a different model
 by env var alone — no file edit, no code change.
+
+Profile fields are sized to the host (the dominant constraint is the context
+budget): `baseUrl`, `model`, `decisionMaxTokens` (tiny — Route/Decide),
+`voiceMaxTokens` (a free-text reply needs more room), `voiceTemperature` (0 =
+deterministic; the persona is the one site where >0 may help), `reasoning`
+(model-side thinking, default **false** — ADR-0009), and `contextBudget`. Token
+budgets and temperature are deliberately *not* constants in code: a 1B model on a
+Pi and a 200B model on a workstation want very different values (user story 18).
+Env coercion validates both numbers and booleans, failing loudly on garbage.
 
 ---
 
@@ -492,6 +543,10 @@ These are the invariants a contributor must not violate. Each traces to an ADR.
    Skills/tools exist for *reliability*, not containment.
 8. **Respect the context budget in every slot.** It is small, host-variable, and
    the dominant constraint of the whole system.
+9. **The harness plans; the model does not "think"** (ADR-0009). Model-side
+   reasoning is off by default — on a small local model it burns the output
+   budget and latency for work the deterministic harness is meant to own. Resist
+   re-enabling it globally to "make it smarter."
 
 ---
 
@@ -502,15 +557,16 @@ Mapped to the [ARCHITECTURE.md](../../ARCHITECTURE.md) build order:
 | # | Step | Status |
 |---|---|---|
 | 1 | Provider adapter + constrained decoding (GBNF) | 🟢 Built |
-| 2 | Fixed-slot assembly + Route + Voice | 🟡 Route built; assembly/Voice designed |
+| 2 | Fixed-slot assembly + Route + Voice | 🟢 Built (chat path; task→Voice lands with the Decide loop) |
 | 3 | Tool registry + result envelope + read-only tool + Decide loop | 🟡 Designed |
 | 4 | Skill loader + progressive disclosure + summarise-link (trust boundary) | 🟡 Designed |
 | 5 | Memory port + grep/markdown adapter | 🟡 Designed |
 | 6 | Daemon + sessions + conversation store + ticker | 🟡 Designed |
 | 7 | Messaging port + Telegram adapter | 🟡 Designed |
 | 8 | Scheduler (user jobs) | 🟡 Designed |
-| 9 | Hooks wired end-to-end (compression, redaction, logging, instrumentation) | 🟡 Logging built; rest designed |
+| 9 | Hooks wired end-to-end (compression, redaction, logging, instrumentation) | 🟡 Logging built (with token/latency metrics); rest designed |
 
-The walking skeleton deliberately implements the *riskiest* slice end-to-end —
-config → Provider port → GBNF constraint → one call-site → logged result — so the
-seam every later step depends on is proven before the system is built outward.
+Slices 1–2 deliberately implement the *riskiest* path end-to-end — config →
+Provider port → GBNF constraint → Route → chat → SOUL persona reply → logged
+result — so the seams every later step depends on are proven before the system is
+built outward.

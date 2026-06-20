@@ -30,6 +30,29 @@ export interface DecideResult<T = unknown> {
   error?: string; // set when !ok
 }
 
+// Free-text generation: the Voice call-site (ADR-0003). Unlike a decision it is
+// *unconstrained* — no grammar, no schema — because Voice is the one place the
+// model writes prose for a human. Persona is supplied as a per-call-site
+// `system` fragment (ADR-0006); there is no global system prompt.
+export interface GenerateArgs {
+  user: string;
+  system?: string;
+  callSite?: string;
+  maxTokens?: number;
+  // Sampling temperature for this reply. Defaults to 0 (deterministic). Voice is
+  // the one call-site where >0 may be wanted; decisions stay at 0.
+  temperature?: number;
+  timeoutMs?: number;
+}
+
+export interface GenerateResult {
+  ok: boolean; // transport succeeded: HTTP 2xx + parseable response
+  text: string; // the model's reply (empty when !ok)
+  ms: number; // wall-clock for the call
+  error?: string; // set when !ok
+}
+
 export interface Provider {
   decide<T = unknown>(args: DecideArgs): Promise<DecideResult<T>>;
+  generate(args: GenerateArgs): Promise<GenerateResult>;
 }

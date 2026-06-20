@@ -3,13 +3,17 @@ import type { DecideArgs, DecideResult, Provider } from "../provider/provider.ts
 import { ROUTE_VALUES, route } from "./route.ts";
 
 // Scripted fake Provider — the primary test seam (PRD › Testing Decisions).
-// It records the call and returns a canned, conformant decision.
+// It records the call and returns a canned, conformant decision. Route never
+// calls `generate`, so that arm just throws if exercised.
 function scriptedProvider(value: unknown): { provider: Provider; calls: DecideArgs[] } {
   const calls: DecideArgs[] = [];
   const provider: Provider = {
     async decide<T>(args: DecideArgs): Promise<DecideResult<T>> {
       calls.push(args);
       return { ok: true, conformant: true, value: value as T, raw: JSON.stringify(value), ms: 1 };
+    },
+    async generate() {
+      throw new Error("route should not call generate");
     },
   };
   return { provider, calls };

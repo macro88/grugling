@@ -9,7 +9,7 @@
 // never silently turned into a chat reply.
 
 import type { Logger } from "../logging/logger.ts";
-import type { DecideArgs, DecideResult, Provider } from "./provider.ts";
+import type { DecideArgs, DecideResult, GenerateArgs, GenerateResult, Provider } from "./provider.ts";
 
 export interface LlamaCppOptions {
   baseUrl: string;
@@ -19,6 +19,11 @@ export interface LlamaCppOptions {
   fetchImpl?: typeof fetch;
   defaultMaxTokens?: number;
   defaultTimeoutMs?: number;
+  // Allow model-side reasoning. When false (the grugling default), the request
+  // asks the server to disable "thinking" — otherwise a reasoning model burns
+  // the output budget on a hidden chain-of-thought before emitting the reply
+  // (or the grammar-constrained token). The knob is build-dependent; re-probe.
+  reasoning?: boolean;
 }
 
 interface ChatMessage {
@@ -26,11 +31,54 @@ interface ChatMessage {
   content: string;
 }
 
+interface ChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+}
+
+interface ChatTimings {
+  predicted_per_second?: number;
+}
+
+// Normalised outcome of one /chat/completions POST — the transport plumbing
+// (timeout/abort, HTTP status, content extraction, error shaping) plus the
+// metadata both call paths want logged. `decide` and `generate` differ only in
+// how they interpret it.
+interface ChatOutcome {
+  ok: boolean; // transport + 2xx
+  content: string; // assistant content on 2xx; "" otherwise
+  errorBody: string; // response-body excerpt on non-2xx (surfaced as `raw`)
+  finishReason: string; // "stop" | "length" (truncated) | … ; "" when unknown
+  usage?: ChatUsage;
+  timings?: ChatTimings;
+  ms: number;
+  error?: string; // set when !ok
+}
+
+// Metrics pulled from a response for the structured log (tokens, cache hits,
+// throughput, truncation) — instrumentation per ARCHITECTURE.md / user stories
+// 19–21. Undefined fields drop out of the JSON automatically.
+function metrics(out: ChatOutcome): Record<string, unknown> {
+  return {
+    finishReason: out.finishReason || undefined,
+    promptTokens: out.usage?.prompt_tokens,
+    completionTokens: out.usage?.completion_tokens,
+    cachedTokens: out.usage?.prompt_tokens_details?.cached_tokens,
+    tokensPerSecond: out.timings?.predicted_per_second
+      ? Math.round(out.timings.predicted_per_second)
+      : undefined,
+  };
+}
+
 export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const url = `${opts.baseUrl.replace(/\/$/, "")}/chat/completions`;
 
-  async function decide<T>(args: DecideArgs): Promise<DecideResult<T>> {
+  async function postChat(
+    args: { system?: string; user: string; maxTokens?: number; temperature?: number; timeoutMs?: number },
+    extraBody: Record<string, unknown>,
+  ): Promise<ChatOutcome> {
     const messages: ChatMessage[] = [];
     if (args.system) messages.push({ role: "system", content: args.system });
     messages.push({ role: "user", content: args.user });
@@ -38,18 +86,18 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
     const body = {
       model: opts.model,
       messages,
-      temperature: 0,
+      temperature: args.temperature ?? 0,
       max_tokens: args.maxTokens ?? opts.defaultMaxTokens ?? 64,
       stream: false,
-      grammar: args.grammar, // top-level GBNF — ADR-0002
+      // Disable model-side reasoning unless explicitly enabled (build-dependent).
+      ...(opts.reasoning === false ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+      ...extraBody,
     };
 
     const timeoutMs = args.timeoutMs ?? opts.defaultTimeoutMs ?? 60_000;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     const start = performance.now();
-
-    let result: DecideResult<T>;
     try {
       const res = await fetchImpl(url, {
         method: "POST",
@@ -60,23 +108,45 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       const ms = performance.now() - start;
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        result = { ok: false, conformant: false, value: null, raw: text.slice(0, 300), ms, error: `HTTP ${res.status}` };
-      } else {
-        const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-        const raw = json.choices?.[0]?.message?.content ?? "";
-        const parsed = tryParse(raw);
-        const isObject = parsed !== null && typeof parsed === "object";
-        const conformant = isObject && (args.conformsTo ? args.conformsTo(parsed) : true);
-        result = { ok: true, conformant, value: conformant ? (parsed as T) : null, raw, ms };
+        return { ok: false, content: "", errorBody: text.slice(0, 300), finishReason: "", ms, error: `HTTP ${res.status}` };
       }
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+        usage?: ChatUsage;
+        timings?: ChatTimings;
+      };
+      const choice = json.choices?.[0];
+      return {
+        ok: true,
+        content: choice?.message?.content ?? "",
+        errorBody: "",
+        finishReason: choice?.finish_reason ?? "",
+        usage: json.usage,
+        timings: json.timings,
+        ms,
+      };
     } catch (e) {
       const ms = performance.now() - start;
       const err = e as Error & { cause?: unknown };
       const cause = err.cause instanceof Error ? `: ${err.cause.message}` : "";
       const error = err.name === "AbortError" ? `timed out after ${timeoutMs}ms` : `${err.message}${cause}`;
-      result = { ok: false, conformant: false, value: null, raw: "", ms, error };
+      return { ok: false, content: "", errorBody: "", finishReason: "", ms, error };
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  async function decide<T>(args: DecideArgs): Promise<DecideResult<T>> {
+    const out = await postChat(args, { grammar: args.grammar }); // top-level GBNF — ADR-0002
+
+    let result: DecideResult<T>;
+    if (!out.ok) {
+      result = { ok: false, conformant: false, value: null, raw: out.errorBody, ms: out.ms, error: out.error };
+    } else {
+      const parsed = tryParse(out.content);
+      const isObject = parsed !== null && typeof parsed === "object";
+      const conformant = isObject && (args.conformsTo ? args.conformsTo(parsed) : true);
+      result = { ok: true, conformant, value: conformant ? (parsed as T) : null, raw: out.content, ms: out.ms };
     }
 
     opts.logger?.log({
@@ -87,13 +157,44 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       ok: result.ok,
       conformant: result.conformant,
       grammarBytes: args.grammar.length,
+      ...metrics(out),
       ...(result.error ? { error: result.error } : {}),
     });
 
     return result;
   }
 
-  return { decide };
+  async function generate(args: GenerateArgs): Promise<GenerateResult> {
+    // No grammar: Voice is the one unconstrained call-site (ADR-0003/0006).
+    const out = await postChat(args, {});
+
+    let result: GenerateResult;
+    if (!out.ok) {
+      result = { ok: false, text: "", ms: out.ms, error: out.error };
+    } else if (out.finishReason === "length") {
+      // Truncated mid-reply (budget too small, often a reasoning model eating it)
+      // — surfaced, never returned as a silent partial/empty reply.
+      result = { ok: false, text: out.content, ms: out.ms, error: "truncated: hit max_tokens (finish_reason=length)" };
+    } else if (!out.content.trim()) {
+      result = { ok: false, text: "", ms: out.ms, error: "empty completion" };
+    } else {
+      result = { ok: true, text: out.content, ms: out.ms };
+    }
+
+    opts.logger?.log({
+      event: "model_call",
+      callSite: args.callSite ?? "voice",
+      model: opts.model,
+      ms: Math.round(result.ms),
+      ok: result.ok,
+      ...metrics(out),
+      ...(result.error ? { error: result.error } : {}),
+    });
+
+    return result;
+  }
+
+  return { decide, generate };
 }
 
 // Lenient parse: a constrained response should be clean JSON, but a repair
