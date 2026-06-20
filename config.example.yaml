@@ -5,6 +5,8 @@
 #   GRUGLING_MODEL           model name
 #   GRUGLING_DECISION_MAX_TOKENS  tokens per constrained decision (Route/Decide)
 #   GRUGLING_VOICE_MAX_TOKENS     tokens for a free-text Voice reply
+#   GRUGLING_VOICE_TEMPERATURE    sampling temperature at Voice (0 = deterministic)
+#   GRUGLING_REASONING            allow model-side reasoning (true/false)
 #   GRUGLING_CONTEXT_BUDGET       hard token ceiling for the host model
 profile: default
 profiles:
@@ -12,5 +14,7 @@ profiles:
     baseUrl: http://127.0.0.1:8080/v1
     model: gemma-4-E4B
     decisionMaxTokens: 64 # Route/Decide are tiny; keep this small
-    voiceMaxTokens: 256 # a Voice reply needs more room than a decision; size to host
+    voiceMaxTokens: 512 # a Voice reply needs more room than a decision; size to host
+    voiceTemperature: 0 # 0 = deterministic; raise for a livelier persona
+    reasoning: false # the harness is the planner; model "thinking" wastes the budget
     contextBudget: 4096 # sized to the host model's context window

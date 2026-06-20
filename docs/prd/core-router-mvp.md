@@ -2,7 +2,7 @@
 
 > **Status:** ready-for-agent · **Tracking issue:** [macro88/grugling#1](https://github.com/macro88/grugling/issues/1)
 > **Scope:** build-order steps 1–4 in [ARCHITECTURE.md](../../ARCHITECTURE.md) — the command-line increment that proves the core thesis.
-> **Vocabulary:** [CONTEXT.md](../../CONTEXT.md). **Rationale:** [ADRs](../adr/) 0001–0008.
+> **Vocabulary:** [CONTEXT.md](../../CONTEXT.md). **Rationale:** [ADRs](../adr/) 0001–0009.
 >
 > This doc is the canonical PRD. The tracking issue is an index into it; an implementing agent should read this doc plus that issue.
 
@@ -53,14 +53,14 @@ The MVP ships two Skills: **summarise-link** (fetch a URL → distil to a short 
 
 ## Implementation Decisions
 
-- **Provider port** with an **OpenAI-compatible HTTP adapter**. Core method: "return a decision/text conforming to this schema." Implements **constrained decoding via GBNF** (llama.cpp top-level `grammar`). The router spike found `response_format.json_schema`, llama.cpp `json_schema`, and `json_object` all return **empty** on the target build, so JSON-schema is **not** a usable constraint path; the adapter needs a **schema→GBNF compiler** to turn in-scope tool input schemas into grammars. Fallback ladder: constrain → parse-and-repair → treat-as-answer (the last logged as a failure, never silent). Re-probe LM Studio before assuming parity. Per ADR-0002. (Shape seeded by the spike's `provider.ts`.)
+- **Provider port** with an **OpenAI-compatible HTTP adapter**. Core method: "return a decision/text conforming to this schema." Implements **constrained decoding via GBNF** (llama.cpp top-level `grammar`). The router spike found `response_format.json_schema`, llama.cpp `json_schema`, and `json_object` all return **empty** on the target build, so JSON-schema is **not** a usable constraint path; the adapter needs a **schema→GBNF compiler** to turn in-scope tool input schemas into grammars. Fallback ladder: constrain → parse-and-repair → treat-as-answer (the last logged as a failure, never silent). The free-text **Voice** reply is the deliberate exception — a separate `generate` path with no grammar (ADR-0003). **Model-side reasoning is disabled by default** so a "thinking" model cannot consume the output budget before emitting the reply or the constrained token (ADR-0009). Re-probe LM Studio before assuming parity. Per ADR-0002. (Shape seeded by the spike's `provider.ts`.)
 - **Harness core**: the per-message pipeline **Route → Decide (bounded loop) → Voice** (ADR-0003) with **fixed-slot prompt assembly** — each call freshly built from bounded slots, no growing transcript. Decide emits *facts*; Voice emits the user-facing reply.
 - **Tool registry + Tool contract**: every Tool exposes name, description, input schema, `execute → result envelope`, and declarative metadata (`trust`, `risk`; forward-compatible `needsConfirmation` / `longRunning` declared but not implemented). The in-scope tools' input schemas generate the constrained-decoding grammar (ADR-0001, 0002).
 - **Result envelope**: uniform across tools — ok/exit, short summary, key lines, a pointer to full raw output, and a **`trust`** tag.
 - **Skill loader + progressive disclosure** (ADR-0004): only Skill names + one-line descriptions sit in context; selecting a Skill loads its instructions and narrows the in-scope tools (smaller grammar → higher reliability). A "general" default Skill covers chat / unscoped requests.
 - **Compression** behind an interface; the MVP adapter is deterministic (head/tail, error-grep, char cap). RTK is a future backend, not wired here.
 - **Persona**: a single editable `SOUL.md` injected only at Voice; other call-sites use minimal per-call-site fragments; **no global system prompt** (ADR-0006).
-- **Config loader**: a profile-based file (base URL, model, context budget, max tokens, loop cap), hand-edited for MVP.
+- **Config loader**: a profile-based file (base URL, model, context budget, per-call-site token budgets, Voice temperature, model-side reasoning toggle, loop cap), hand-edited for MVP. Token budgets and temperature are sized to the host, never hardcoded.
 - **Logging hook**: emits structured events (call-site, tokens, latency, schema, conformance/fallback, tool name + trust). Headline metric: **conformance rate**.
 - **Trust boundary (ADR-0005)**: untrusted tool output is only ever fed to a **tool-less** call-site (a summarise/extract step). Decide only ever ingests distilled facts, never raw untrusted content; the Harness enforces this off the result's `trust` tag.
 - **Secrets (ADR-0008)**: tools wield secrets by handle; redaction keeps them out of model context and logs (in this CLI scope, primarily the use-don't-see principle + log redaction).
@@ -76,7 +76,7 @@ The MVP ships two Skills: **summarise-link** (fetch a URL → distil to a short 
 - **Tests:** Vitest.
 - **CLI:** no arg-parsing framework — hand-rolled `process.argv`; revisit only if the command surface grows.
 - **Constrained decoding:** GBNF grammars via llama.cpp `grammar`, plus a schema→GBNF compiler (see Implementation Decisions and ADR-0002).
-- **Provider interface (seed from the spike's `provider.ts`):** `decide({ baseUrl, model, system, user, grammar, maxTokens, timeoutMs }) → { ok, conformant, value, raw, ms }`.
+- **Provider interface:** two verbs — `decide({ system?, user, grammar, maxTokens?, timeoutMs? }) → { ok, conformant, value, raw, ms }` for constrained decisions, and `generate({ system?, user, temperature?, maxTokens?, timeoutMs? }) → { ok, text, ms }` for the free-text Voice reply. `baseUrl`/`model`/`reasoning` bind when the adapter is constructed (not per call). Seeded by the spike's `provider.ts`.
 - **Tool registry shape:** `{ name, description, inputSchema, execute(args) → ResultEnvelope, meta: { trust, risk, … } }`; the in-scope tools' `inputSchema`s feed the schema→GBNF compiler.
 
 These are PRD constraints, not ADRs (reversible, conventional). The one ADR-level choice — GBNF over JSON-schema — lives in ADR-0002.
@@ -99,6 +99,7 @@ Everything in [ARCHITECTURE.md](../../ARCHITECTURE.md) build-order steps 5–9 a
 
 - **Build riskiest-first** ([ARCHITECTURE.md](../../ARCHITECTURE.md)): land the Provider + constrained decoding and prove a schema-conforming decision comes out of the local model *before* building the pipeline outward. **Spike verdict (2026-06-18): all three bets cleared** — constrained decoding works via GBNF (JSON-schema returns empty on this build), routing 100/93/93% correct at 3/8/15 tools, ~0.8–1.3s per call (3-call pipeline ≈ 2.4–4s). Build proceeds.
 - **Constrained decoding is the lynchpin** (ADR-0002), and on the target llama.cpp build that means **GBNF specifically** (JSON-schema returns empty). If a backend cannot constrain, the reliability claim weakens — surface conformance rate prominently.
+- **Reasoning models eat the budget** (verified 2026-06-20, ADR-0009): on `gemma-4-E4B` a chat reply came back **empty** because the model spent the whole output budget on a hidden chain-of-thought before the content; the same call ran ~10s vs ~1s with thinking off. Model-side reasoning is **disabled by default**; the disable knob is build-dependent (re-probe), and a truncated/empty completion is now surfaced as a failure rather than a silent blank.
 - **Skill-narrowing is only weakly validated so far** (ADR-0004): the spike saw a 7-point accuracy gain on a single case. Treat the *speed* gain as solid, but re-run a larger/harder routing eval before relying on the accuracy gain (covered by the conformance-report + eval slice).
 - Reference hardware: AMD Ryzen 5 4600U / ~14 GB RAM, model `gemma-4-E4B` (Q4_K_M) at a 4096-token context. Context is small and host-variable — respect the budget in every slot.
 - Success is judged by real use + logs (conformance rate, loop length, latency), not a formal eval set.

@@ -39,7 +39,7 @@ describe("handleMessage", () => {
       voice: { ok: true, text: "grug say hi", ms: 1 },
     });
 
-    const result = await handleMessage(provider, "hello", { soul: SOUL, voiceMaxTokens: 256 });
+    const result = await handleMessage(provider, "hello", { soul: SOUL, voiceMaxTokens: 256, voiceTemperature: 0 });
 
     expect(result).toEqual({ kind: "chat", reply: "grug say hi" });
     // Voice was dispatched, with the SOUL persona in scope.
@@ -53,7 +53,7 @@ describe("handleMessage", () => {
       route: { ok: true, conformant: true, value: { route: "task" }, raw: "", ms: 1 },
     });
 
-    const result = await handleMessage(provider, "summarise https://example.com", { soul: SOUL, voiceMaxTokens: 256 });
+    const result = await handleMessage(provider, "summarise https://example.com", { soul: SOUL, voiceMaxTokens: 256, voiceTemperature: 0 });
 
     expect(result.kind).toBe("task");
     expect(generateCalls).toHaveLength(0); // task path is stubbed — no Voice yet
@@ -64,7 +64,7 @@ describe("handleMessage", () => {
       route: { ok: false, conformant: false, value: null, raw: "", ms: 1, error: "ECONNREFUSED" },
     });
 
-    const result = await handleMessage(provider, "hello", { soul: SOUL, voiceMaxTokens: 256 });
+    const result = await handleMessage(provider, "hello", { soul: SOUL, voiceMaxTokens: 256, voiceTemperature: 0 });
 
     expect(result.kind).toBe("error");
     expect(generateCalls).toHaveLength(0);
@@ -75,7 +75,7 @@ describe("handleMessage", () => {
       route: { ok: true, conformant: false, value: null, raw: '"banana"', ms: 1 },
     });
 
-    const result = await handleMessage(provider, "hello", { soul: SOUL, voiceMaxTokens: 256 });
+    const result = await handleMessage(provider, "hello", { soul: SOUL, voiceMaxTokens: 256, voiceTemperature: 0 });
 
     expect(result.kind).toBe("error");
   });
@@ -86,7 +86,7 @@ describe("handleMessage", () => {
       voice: { ok: false, text: "", ms: 1, error: "timed out after 60000ms" },
     });
 
-    const result = await handleMessage(provider, "hello", { soul: SOUL, voiceMaxTokens: 256 });
+    const result = await handleMessage(provider, "hello", { soul: SOUL, voiceMaxTokens: 256, voiceTemperature: 0 });
 
     expect(result).toMatchObject({ kind: "error" });
   });

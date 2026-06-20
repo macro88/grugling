@@ -24,16 +24,21 @@ async function main(argv: string[]): Promise<number> {
     model: config.model,
     logger: createLogger(),
     defaultMaxTokens: config.decisionMaxTokens,
+    reasoning: config.reasoning,
   });
 
-  const result = await handleMessage(provider, message, { soul, voiceMaxTokens: config.voiceMaxTokens });
+  const result = await handleMessage(provider, message, {
+    soul,
+    voiceMaxTokens: config.voiceMaxTokens,
+    voiceTemperature: config.voiceTemperature,
+  });
 
   if (result.kind === "error") {
     process.stderr.write(`grug broke: ${result.message}\n`);
     return 1;
   }
 
-  process.stdout.write(result.reply + "\n");
+  process.stdout.write("grug:" + result.reply + "\n");
   return 0;
 }
 

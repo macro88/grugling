@@ -25,6 +25,8 @@ describe("resolveConfig", () => {
       GRUGLING_BASE_URL: "http://host:1234/v1",
       GRUGLING_DECISION_MAX_TOKENS: "128",
       GRUGLING_VOICE_MAX_TOKENS: "1024",
+      GRUGLING_VOICE_TEMPERATURE: "0.7",
+      GRUGLING_REASONING: "true",
       GRUGLING_CONTEXT_BUDGET: "8192",
     });
     expect(cfg.profile).toBe("b");
@@ -32,10 +34,16 @@ describe("resolveConfig", () => {
     expect(cfg.baseUrl).toBe("http://host:1234/v1");
     expect(cfg.decisionMaxTokens).toBe(128);
     expect(cfg.voiceMaxTokens).toBe(1024);
+    expect(cfg.voiceTemperature).toBe(0.7);
+    expect(cfg.reasoning).toBe(true);
     expect(cfg.contextBudget).toBe(8192);
   });
 
   it("throws a clear error on a non-numeric numeric env var", () => {
     expect(() => resolveConfig(null, { GRUGLING_DECISION_MAX_TOKENS: "lots" })).toThrow(/GRUGLING_DECISION_MAX_TOKENS/);
+  });
+
+  it("throws a clear error on a non-boolean GRUGLING_REASONING", () => {
+    expect(() => resolveConfig(null, { GRUGLING_REASONING: "yes" })).toThrow(/GRUGLING_REASONING/);
   });
 });

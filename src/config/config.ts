@@ -11,6 +11,12 @@ export interface ProfileConfig {
   model: string;
   decisionMaxTokens: number; // tokens per constrained decision (Route/Decide) — tiny
   voiceMaxTokens: number; // tokens for a free-text Voice reply — host-sized
+  voiceTemperature: number; // sampling temperature at Voice; 0 = deterministic
+  // Allow model-side reasoning ("thinking"). Off by default: grugling's harness
+  // *is* the planner (ADR-0003), so model reasoning is wasted tokens + latency,
+  // and on a reasoning model it silently eats the output budget before the reply
+  // (or the grammar-constrained token) is ever emitted.
+  reasoning: boolean;
   contextBudget: number;
 }
 
@@ -26,7 +32,9 @@ export const DEFAULT_CONFIG: ProfileConfig = {
   baseUrl: "http://127.0.0.1:8080/v1",
   model: "gemma-4-E4B",
   decisionMaxTokens: 64,
-  voiceMaxTokens: 256,
+  voiceMaxTokens: 512,
+  voiceTemperature: 0,
+  reasoning: false,
   contextBudget: 4096,
 };
 
@@ -41,6 +49,13 @@ function envNumber(name: string, raw: string | undefined): number | undefined {
   return n;
 }
 
+function envBool(name: string, raw: string | undefined): boolean | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === "true" || raw === "1") return true;
+  if (raw === "false" || raw === "0") return false;
+  throw new Error(`${name} must be true/false, got "${raw}"`);
+}
+
 // Pure resolution — IO-free so it is straightforward to test.
 export function resolveConfig(file: ConfigFile | null, env: NodeJS.ProcessEnv = {}): ResolvedConfig {
   const profile = env.GRUGLING_PROFILE ?? file?.profile ?? "default";
@@ -50,6 +65,8 @@ export function resolveConfig(file: ConfigFile | null, env: NodeJS.ProcessEnv = 
     model: env.GRUGLING_MODEL,
     decisionMaxTokens: envNumber("GRUGLING_DECISION_MAX_TOKENS", env.GRUGLING_DECISION_MAX_TOKENS),
     voiceMaxTokens: envNumber("GRUGLING_VOICE_MAX_TOKENS", env.GRUGLING_VOICE_MAX_TOKENS),
+    voiceTemperature: envNumber("GRUGLING_VOICE_TEMPERATURE", env.GRUGLING_VOICE_TEMPERATURE),
+    reasoning: envBool("GRUGLING_REASONING", env.GRUGLING_REASONING),
     contextBudget: envNumber("GRUGLING_CONTEXT_BUDGET", env.GRUGLING_CONTEXT_BUDGET),
   });
   return { profile, ...DEFAULT_CONFIG, ...fromFile, ...fromEnv };

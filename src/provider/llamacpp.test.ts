@@ -9,6 +9,24 @@ function chatResponse(content: string): Response {
   });
 }
 
+// A fuller response carrying the metadata grugling logs (finish_reason, usage,
+// timings), modelled on a real llama.cpp reply.
+function fullResponse(opts: {
+  content: string;
+  finishReason?: string;
+  usage?: object;
+  timings?: object;
+}): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [{ message: { content: opts.content }, finish_reason: opts.finishReason ?? "stop" }],
+      usage: opts.usage,
+      timings: opts.timings,
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
 const GRAMMAR = `root ::= "{" ws "\\"route\\"" ws ":" ws val ws "}"\nval ::= "\\"chat\\""\nws ::= " "?`;
 
 describe("createLlamaCppProvider", () => {
@@ -103,5 +121,80 @@ describe("createLlamaCppProvider", () => {
     const result = await provider.decide({ user: "x", grammar: GRAMMAR, timeoutMs: 5 });
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/timed out after 5ms/);
+  });
+
+  it("disables model-side reasoning when reasoning is false", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => chatResponse('{"route":"chat"}'));
+    const provider = createLlamaCppProvider({ baseUrl: "http://h/v1", model: "m", fetchImpl, reasoning: false });
+    await provider.decide({ user: "x", grammar: GRAMMAR });
+    const body = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+  });
+
+  it("leaves reasoning to the server when reasoning is not set", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => chatResponse('{"route":"chat"}'));
+    const provider = createLlamaCppProvider({ baseUrl: "http://h/v1", model: "m", fetchImpl });
+    await provider.decide({ user: "x", grammar: GRAMMAR });
+    const body = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(body.chat_template_kwargs).toBeUndefined();
+  });
+
+  it("generate returns text and forwards a non-zero temperature", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => fullResponse({ content: "grug say hi" }));
+    const provider = createLlamaCppProvider({ baseUrl: "http://h/v1", model: "m", fetchImpl });
+    const result = await provider.generate({ user: "hi", maxTokens: 200, temperature: 0.4 });
+    expect(result).toMatchObject({ ok: true, text: "grug say hi" });
+    const body = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(body.temperature).toBe(0.4);
+    expect(body.max_tokens).toBe(200);
+    expect(body.grammar).toBeUndefined(); // Voice is unconstrained
+  });
+
+  it("treats a length-truncated reply as a visible failure, not a silent partial", async () => {
+    const events: LogEvent[] = [];
+    const provider = createLlamaCppProvider({
+      baseUrl: "http://h/v1",
+      model: "m",
+      fetchImpl: (async () => fullResponse({ content: "grug half-", finishReason: "length" })) as unknown as typeof fetch,
+      logger: { log: (e) => events.push(e) },
+    });
+    const result = await provider.generate({ user: "hi" });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/truncated/);
+    expect(events[0]).toMatchObject({ ok: false, finishReason: "length" });
+  });
+
+  it("treats an empty completion as a visible failure", async () => {
+    const provider = createLlamaCppProvider({
+      baseUrl: "http://h/v1",
+      model: "m",
+      fetchImpl: (async () => fullResponse({ content: "" })) as unknown as typeof fetch,
+    });
+    const result = await provider.generate({ user: "hi" });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/empty/);
+  });
+
+  it("logs usage, cache hits, and throughput metrics", async () => {
+    const events: LogEvent[] = [];
+    const provider = createLlamaCppProvider({
+      baseUrl: "http://h/v1",
+      model: "m",
+      fetchImpl: (async () =>
+        fullResponse({
+          content: "grug say hi",
+          usage: { prompt_tokens: 207, completion_tokens: 12, prompt_tokens_details: { cached_tokens: 197 } },
+          timings: { predicted_per_second: 28.4 },
+        })) as unknown as typeof fetch,
+      logger: { log: (e) => events.push(e) },
+    });
+    await provider.generate({ user: "hi" });
+    expect(events[0]).toMatchObject({
+      finishReason: "stop",
+      promptTokens: 207,
+      completionTokens: 12,
+      cachedTokens: 197,
+      tokensPerSecond: 28,
+    });
   });
 });

@@ -15,17 +15,19 @@ import { assembleSystem } from "./prompt.ts";
 export const VOICE_INSTRUCTION =
   "Reply to the user as grug. Keep it short and direct. No filler, no preamble.";
 
-// The reply budget is host-sized, not a constant: a 1B model on a Pi and a 200B
-// model on a workstation want very different lengths. It comes from the config
-// profile (`voiceMaxTokens`) — see ADR-driven config (PRD › user story 18).
+// The reply budget and temperature are host-sized, not constants: a 1B model on
+// a Pi and a 200B model on a workstation want very different lengths, and the
+// persona is the one call-site where sampling >0 may be wanted. Both come from
+// the config profile (`voiceMaxTokens` / `voiceTemperature`) — PRD › user story 18.
 export function voice(
   provider: Provider,
-  args: { soul: string; message: string; maxTokens: number },
+  args: { soul: string; message: string; maxTokens: number; temperature: number },
 ): Promise<GenerateResult> {
   return provider.generate({
     system: assembleSystem(args.soul, VOICE_INSTRUCTION),
     user: args.message,
     callSite: "voice",
     maxTokens: args.maxTokens,
+    temperature: args.temperature,
   });
 }

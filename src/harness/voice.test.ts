@@ -21,7 +21,12 @@ describe("voice", () => {
   it("generates an unconstrained reply with SOUL injected into the system slot", async () => {
     const { provider, calls } = scriptedProvider("grug say hi");
 
-    const result = await voice(provider, { soul: "# SOUL\ngrug terse", message: "hello there", maxTokens: 200 });
+    const result = await voice(provider, {
+      soul: "# SOUL\ngrug terse",
+      message: "hello there",
+      maxTokens: 200,
+      temperature: 0.4,
+    });
 
     expect(result.text).toBe("grug say hi");
     expect(calls).toHaveLength(1);
@@ -30,7 +35,8 @@ describe("voice", () => {
     expect(call.user).toBe("hello there");
     // Fixed-slot assembly: persona first, then the per-call-site instruction.
     expect(call.system).toBe(`# SOUL\ngrug terse\n\n${VOICE_INSTRUCTION}`);
-    // The host-sized reply budget is forwarded to the Provider.
+    // The host-sized reply budget and temperature are forwarded to the Provider.
     expect(call.maxTokens).toBe(200);
+    expect(call.temperature).toBe(0.4);
   });
 });

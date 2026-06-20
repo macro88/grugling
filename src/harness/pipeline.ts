@@ -34,7 +34,7 @@ const TASK_STUB = "task routing works; task execution is not built yet";
 export async function handleMessage(
   provider: Provider,
   message: string,
-  opts: { soul: string; voiceMaxTokens: number },
+  opts: { soul: string; voiceMaxTokens: number; voiceTemperature: number },
 ): Promise<PipelineResult> {
   const routed = await route(provider, message);
   if (!routed.ok) return { kind: "error", message: `cannot reach model: ${routed.error}` };
@@ -46,7 +46,12 @@ export async function handleMessage(
     return { kind: "task", reply: TASK_STUB };
   }
 
-  const spoken = await voice(provider, { soul: opts.soul, message, maxTokens: opts.voiceMaxTokens });
+  const spoken = await voice(provider, {
+    soul: opts.soul,
+    message,
+    maxTokens: opts.voiceMaxTokens,
+    temperature: opts.voiceTemperature,
+  });
   if (!spoken.ok) return { kind: "error", message: `cannot reach model: ${spoken.error}` };
   return { kind: "chat", reply: spoken.text };
 }

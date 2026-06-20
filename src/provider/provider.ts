@@ -39,6 +39,9 @@ export interface GenerateArgs {
   system?: string;
   callSite?: string;
   maxTokens?: number;
+  // Sampling temperature for this reply. Defaults to 0 (deterministic). Voice is
+  // the one call-site where >0 may be wanted; decisions stay at 0.
+  temperature?: number;
   timeoutMs?: number;
 }
 

@@ -19,6 +19,11 @@ export interface LlamaCppOptions {
   fetchImpl?: typeof fetch;
   defaultMaxTokens?: number;
   defaultTimeoutMs?: number;
+  // Allow model-side reasoning. When false (the grugling default), the request
+  // asks the server to disable "thinking" — otherwise a reasoning model burns
+  // the output budget on a hidden chain-of-thought before emitting the reply
+  // (or the grammar-constrained token). The knob is build-dependent; re-probe.
+  reasoning?: boolean;
 }
 
 interface ChatMessage {
@@ -26,15 +31,44 @@ interface ChatMessage {
   content: string;
 }
 
+interface ChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+}
+
+interface ChatTimings {
+  predicted_per_second?: number;
+}
+
 // Normalised outcome of one /chat/completions POST — the transport plumbing
-// (timeout/abort, HTTP status, content extraction, error shaping) shared by both
-// call paths. `decide` and `generate` differ only in how they interpret it.
+// (timeout/abort, HTTP status, content extraction, error shaping) plus the
+// metadata both call paths want logged. `decide` and `generate` differ only in
+// how they interpret it.
 interface ChatOutcome {
   ok: boolean; // transport + 2xx
   content: string; // assistant content on 2xx; "" otherwise
   errorBody: string; // response-body excerpt on non-2xx (surfaced as `raw`)
+  finishReason: string; // "stop" | "length" (truncated) | … ; "" when unknown
+  usage?: ChatUsage;
+  timings?: ChatTimings;
   ms: number;
   error?: string; // set when !ok
+}
+
+// Metrics pulled from a response for the structured log (tokens, cache hits,
+// throughput, truncation) — instrumentation per ARCHITECTURE.md / user stories
+// 19–21. Undefined fields drop out of the JSON automatically.
+function metrics(out: ChatOutcome): Record<string, unknown> {
+  return {
+    finishReason: out.finishReason || undefined,
+    promptTokens: out.usage?.prompt_tokens,
+    completionTokens: out.usage?.completion_tokens,
+    cachedTokens: out.usage?.prompt_tokens_details?.cached_tokens,
+    tokensPerSecond: out.timings?.predicted_per_second
+      ? Math.round(out.timings.predicted_per_second)
+      : undefined,
+  };
 }
 
 export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
@@ -42,7 +76,7 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
   const url = `${opts.baseUrl.replace(/\/$/, "")}/chat/completions`;
 
   async function postChat(
-    args: { system?: string; user: string; maxTokens?: number; timeoutMs?: number },
+    args: { system?: string; user: string; maxTokens?: number; temperature?: number; timeoutMs?: number },
     extraBody: Record<string, unknown>,
   ): Promise<ChatOutcome> {
     const messages: ChatMessage[] = [];
@@ -52,9 +86,11 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
     const body = {
       model: opts.model,
       messages,
-      temperature: 0,
+      temperature: args.temperature ?? 0,
       max_tokens: args.maxTokens ?? opts.defaultMaxTokens ?? 64,
       stream: false,
+      // Disable model-side reasoning unless explicitly enabled (build-dependent).
+      ...(opts.reasoning === false ? { chat_template_kwargs: { enable_thinking: false } } : {}),
       ...extraBody,
     };
 
@@ -72,16 +108,29 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       const ms = performance.now() - start;
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        return { ok: false, content: "", errorBody: text.slice(0, 300), ms, error: `HTTP ${res.status}` };
+        return { ok: false, content: "", errorBody: text.slice(0, 300), finishReason: "", ms, error: `HTTP ${res.status}` };
       }
-      const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      return { ok: true, content: json.choices?.[0]?.message?.content ?? "", errorBody: "", ms };
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+        usage?: ChatUsage;
+        timings?: ChatTimings;
+      };
+      const choice = json.choices?.[0];
+      return {
+        ok: true,
+        content: choice?.message?.content ?? "",
+        errorBody: "",
+        finishReason: choice?.finish_reason ?? "",
+        usage: json.usage,
+        timings: json.timings,
+        ms,
+      };
     } catch (e) {
       const ms = performance.now() - start;
       const err = e as Error & { cause?: unknown };
       const cause = err.cause instanceof Error ? `: ${err.cause.message}` : "";
       const error = err.name === "AbortError" ? `timed out after ${timeoutMs}ms` : `${err.message}${cause}`;
-      return { ok: false, content: "", errorBody: "", ms, error };
+      return { ok: false, content: "", errorBody: "", finishReason: "", ms, error };
     } finally {
       clearTimeout(timer);
     }
@@ -108,6 +157,7 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       ok: result.ok,
       conformant: result.conformant,
       grammarBytes: args.grammar.length,
+      ...metrics(out),
       ...(result.error ? { error: result.error } : {}),
     });
 
@@ -117,9 +167,19 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
   async function generate(args: GenerateArgs): Promise<GenerateResult> {
     // No grammar: Voice is the one unconstrained call-site (ADR-0003/0006).
     const out = await postChat(args, {});
-    const result: GenerateResult = out.ok
-      ? { ok: true, text: out.content, ms: out.ms }
-      : { ok: false, text: "", ms: out.ms, error: out.error };
+
+    let result: GenerateResult;
+    if (!out.ok) {
+      result = { ok: false, text: "", ms: out.ms, error: out.error };
+    } else if (out.finishReason === "length") {
+      // Truncated mid-reply (budget too small, often a reasoning model eating it)
+      // — surfaced, never returned as a silent partial/empty reply.
+      result = { ok: false, text: out.content, ms: out.ms, error: "truncated: hit max_tokens (finish_reason=length)" };
+    } else if (!out.content.trim()) {
+      result = { ok: false, text: "", ms: out.ms, error: "empty completion" };
+    } else {
+      result = { ok: true, text: out.content, ms: out.ms };
+    }
 
     opts.logger?.log({
       event: "model_call",
@@ -127,6 +187,7 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       model: opts.model,
       ms: Math.round(result.ms),
       ok: result.ok,
+      ...metrics(out),
       ...(result.error ? { error: result.error } : {}),
     });
 
