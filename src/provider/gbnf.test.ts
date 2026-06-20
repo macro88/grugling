@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { compileToGbnf, enumDecisionSchema, matchesEnumSchema } from "./gbnf.ts";
+import {
+  compileDecideGrammar,
+  compileToGbnf,
+  enumDecisionSchema,
+  matchesDecideSchema,
+  matchesEnumSchema,
+  type ToolDecl,
+} from "./gbnf.ts";
 
 describe("compileToGbnf", () => {
   it("compiles a single closed-enum decision (the route grammar)", () => {
@@ -74,5 +81,75 @@ describe("matchesEnumSchema", () => {
     expect(matchesEnumSchema(schema, "chat")).toBe(false);
     expect(matchesEnumSchema(schema, null)).toBe(false);
     expect(matchesEnumSchema(schema, ["chat"])).toBe(false);
+  });
+});
+
+describe("compileDecideGrammar", () => {
+  const now: ToolDecl = { name: "now", inputSchema: enumDecisionSchema("format", ["date", "time", "datetime"]) };
+
+  it("compiles a tool-or-finish grammar from the in-scope tools' input schemas", () => {
+    const grammar = compileDecideGrammar([now]);
+    expect(grammar).toBe(
+      [
+        `root ::= tool-0 | finish`,
+        `tool-0 ::= "{" ws "\\"tool\\"" ws ":" ws "\\"now\\"" ws "," ws "\\"args\\"" ws ":" ws arg-0 ws "}"`,
+        `arg-0 ::= "{" ws "\\"format\\"" ws ":" ws arg-0-0 ws "}"`,
+        `arg-0-0 ::= "\\"date\\"" | "\\"time\\"" | "\\"datetime\\""`,
+        `finish ::= "{" ws "\\"tool\\"" ws ":" ws "\\"finish\\"" ws "}"`,
+        `ws ::= " "?`,
+      ].join("\n"),
+    );
+  });
+
+  it("offers one branch per tool plus finish, with per-tool arg rules that never collide", () => {
+    const b: ToolDecl = { name: "b", inputSchema: enumDecisionSchema("mode", ["x"]) };
+    const grammar = compileDecideGrammar([now, b]);
+    expect(grammar).toContain(`root ::= tool-0 | tool-1 | finish`);
+    expect(grammar).toContain(`arg-0-0 ::= "\\"date\\"" | "\\"time\\"" | "\\"datetime\\""`);
+    expect(grammar).toContain(`arg-1-0 ::= "\\"x\\""`);
+  });
+
+  it("compiles a no-arg tool to an empty args object", () => {
+    const ping: ToolDecl = { name: "ping", inputSchema: { type: "object", properties: {} } };
+    const grammar = compileDecideGrammar([ping]);
+    expect(grammar).toContain(`arg-0 ::= "{" ws "}"`);
+  });
+
+  it("uses only hyphenated rule names (GBNF rejects underscores)", () => {
+    const grammar = compileDecideGrammar([now]);
+    expect(grammar).not.toMatch(/[a-z]_[a-z0-9]/);
+  });
+
+  it("throws on an empty tool set", () => {
+    expect(() => compileDecideGrammar([])).toThrow(/no tools/);
+  });
+
+  it("rejects a tool that tries to claim the reserved finish name", () => {
+    const bad: ToolDecl = { name: "finish", inputSchema: { type: "object", properties: {} } };
+    expect(() => compileDecideGrammar([bad])).toThrow(/reserved/);
+  });
+});
+
+describe("matchesDecideSchema", () => {
+  const now: ToolDecl = { name: "now", inputSchema: enumDecisionSchema("format", ["date", "time", "datetime"]) };
+  const tools = [now];
+
+  it("accepts a finish decision and a well-formed tool call", () => {
+    expect(matchesDecideSchema(tools, { tool: "finish" })).toBe(true);
+    expect(matchesDecideSchema(tools, { tool: "now", args: { format: "time" } })).toBe(true);
+  });
+
+  it("rejects an unknown tool, bad args, and a finish carrying extra keys", () => {
+    expect(matchesDecideSchema(tools, { tool: "rm", args: {} })).toBe(false);
+    expect(matchesDecideSchema(tools, { tool: "now", args: { format: "banana" } })).toBe(false);
+    expect(matchesDecideSchema(tools, { tool: "now" })).toBe(false); // missing args
+    expect(matchesDecideSchema(tools, { tool: "finish", args: {} })).toBe(false);
+    expect(matchesDecideSchema(tools, null)).toBe(false);
+  });
+
+  it("accepts an empty args object for a no-arg tool", () => {
+    const ping: ToolDecl = { name: "ping", inputSchema: { type: "object", properties: {} } };
+    expect(matchesDecideSchema([ping], { tool: "ping", args: {} })).toBe(true);
+    expect(matchesDecideSchema([ping], { tool: "ping", args: { extra: "x" } })).toBe(false);
   });
 });

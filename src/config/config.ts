@@ -18,6 +18,7 @@ export interface ProfileConfig {
   // (or the grammar-constrained token) is ever emitted.
   reasoning: boolean;
   contextBudget: number;
+  loopCap: number; // max Decide iterations per task — a confused model can't loop forever
 }
 
 export type ResolvedConfig = ProfileConfig & { profile: string };
@@ -36,6 +37,7 @@ export const DEFAULT_CONFIG: ProfileConfig = {
   voiceTemperature: 0,
   reasoning: false,
   contextBudget: 4096,
+  loopCap: 5,
 };
 
 function stripUndefined<T extends object>(obj: T): Partial<T> {
@@ -68,6 +70,7 @@ export function resolveConfig(file: ConfigFile | null, env: NodeJS.ProcessEnv = 
     voiceTemperature: envNumber("GRUGLING_VOICE_TEMPERATURE", env.GRUGLING_VOICE_TEMPERATURE),
     reasoning: envBool("GRUGLING_REASONING", env.GRUGLING_REASONING),
     contextBudget: envNumber("GRUGLING_CONTEXT_BUDGET", env.GRUGLING_CONTEXT_BUDGET),
+    loopCap: envNumber("GRUGLING_LOOP_CAP", env.GRUGLING_LOOP_CAP),
   });
   return { profile, ...DEFAULT_CONFIG, ...fromFile, ...fromEnv };
 }

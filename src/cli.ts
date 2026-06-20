@@ -5,10 +5,13 @@
 // harness.
 
 import { loadConfig } from "./config/config.ts";
+import { createDeterministicCompressor } from "./harness/compress.ts";
 import { handleMessage } from "./harness/pipeline.ts";
 import { loadSoul } from "./harness/soul.ts";
 import { createLogger } from "./logging/logger.ts";
 import { createLlamaCppProvider } from "./provider/llamacpp.ts";
+import { createNowTool } from "./tools/now.ts";
+import { createRegistry } from "./tools/registry.ts";
 
 async function main(argv: string[]): Promise<number> {
   const message = argv[2];
@@ -19,23 +22,37 @@ async function main(argv: string[]): Promise<number> {
 
   const config = loadConfig();
   const soul = loadSoul();
+  const logger = createLogger();
   const provider = createLlamaCppProvider({
     baseUrl: config.baseUrl,
     model: config.model,
-    logger: createLogger(),
+    logger,
     defaultMaxTokens: config.decisionMaxTokens,
     reasoning: config.reasoning,
   });
+
+  // Capabilities are added by registering a tool here — the harness never changes.
+  const registry = createRegistry([createNowTool()]);
 
   const result = await handleMessage(provider, message, {
     soul,
     voiceMaxTokens: config.voiceMaxTokens,
     voiceTemperature: config.voiceTemperature,
+    registry,
+    compressor: createDeterministicCompressor(),
+    loopCap: config.loopCap,
+    decisionMaxTokens: config.decisionMaxTokens,
+    logger,
   });
 
   if (result.kind === "error") {
     process.stderr.write(`grug broke: ${result.message}\n`);
     return 1;
+  }
+
+  // A fallback reply means a decision couldn't be constrained (already logged).
+  if (result.kind === "task" && result.fallback) {
+    process.stderr.write("grug warn: could not constrain a decision; showing raw output\n");
   }
 
   process.stdout.write("grug:" + result.reply + "\n");
