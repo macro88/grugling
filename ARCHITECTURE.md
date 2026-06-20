@@ -13,11 +13,19 @@ deterministic machinery around it is excellent. The model never does the heavy
 lifting — it resolves small, schema-constrained decisions; the tools and harness
 do the work.
 
+**Current implementation note:** `main` has build-order steps 1–3 only: the
+Provider adapter, fixed-slot Route/Voice path, deterministic compression, the
+bounded Decide loop, the tool registry, and one trusted read-only `now` tool.
+Skill loading/progressive disclosure, untrusted-content distillation,
+persistence, daemon hosting, messaging, and the rest of the whole-system design
+below remain designed only.
+
 ## Runtime shape
 
-- A persistent **daemon** hosts the messaging listener, an internal
-  scheduler/ticker (session sweeps + user jobs), and the harness.
-- A thin **CLI** is a client onto the same core for dev and ad-hoc use.
+- A persistent **daemon** is the designed host for the messaging listener, an
+  internal scheduler/ticker (session sweeps + user jobs), and the harness.
+- The current implementation is a standalone **CLI** for dev and ad-hoc use;
+  the CLI-as-thin-client split is still future work.
 - All state lives on disk, so restarts resume cleanly. (Process supervision /
   auto-recovery is post-MVP and must be external to the daemon.)
 
@@ -86,8 +94,9 @@ depends on an optional adapter (there's always a dumb fallback).
 
 1. **Capability boundary = the environment.** Autonomy by default; isolate by
    running in Docker/a VM. No allowlist-only crippling.
-2. **Trust boundary.** Untrusted content (fetched pages, emails) is distilled by
-   a **tool-less** call-site before any deciding step can act on it.
+2. **Trust boundary.** Current code fails closed on untrusted content. The
+   target step-4 design distils fetched pages/emails through a **tool-less**
+   call-site before any deciding step can act on them.
 3. **Secrets boundary.** The model never sees raw secrets; tools wield them by
    handle; a redaction hook scrubs context *and* logs.
 4. **Confirmation** is an optional, configurable policy — not a hard gate.
@@ -99,7 +108,7 @@ conformance rate** (did the model's output match the grammar first try?). Also
 loop length, latency, tokens, compression ratio, failures. Success signal:
 implicit (rephrase/retry) + lightweight explicit 👍/👎.
 
-## MVP scope
+## Target MVP scope
 
 **In:** TypeScript daemon + CLI; Provider adapter with constrained decoding;
 Route/Decide/Voice + fixed-slot assembly; tool registry + result envelope; skill
