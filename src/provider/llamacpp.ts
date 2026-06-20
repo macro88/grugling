@@ -63,13 +63,13 @@ interface ChatOutcome {
 
 // Verbose enrichment (ADR-0010): when Debug is enabled, attach the full request
 // and full response to the event. Guarded by isEnabled so nothing is built
-// otherwise. On a failed call the request is the prime debugging signal; the
-// error body stands in for the (absent) response.
+// otherwise. The request is always present (we built it) — the prime signal on a
+// failed call; `response` carries the parsed body on 2xx or the full error body
+// on a non-2xx, and is absent only when the transport never replied.
 function attachVerbose(logger: Logger | undefined, event: LogEvent, out: ChatOutcome): void {
   if (!logger?.isEnabled(LogLevel.Debug)) return;
   event.request = out.request;
-  const response = out.response ?? (out.errorBody || undefined);
-  if (response !== undefined) event.response = response;
+  if (out.response !== undefined) event.response = out.response;
 }
 
 // Metrics pulled from a response for the structured log (tokens, cache hits,
@@ -124,7 +124,9 @@ export function createLlamaCppProvider(opts: LlamaCppOptions): Provider {
       const ms = performance.now() - start;
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        return { ok: false, content: "", errorBody: text.slice(0, 300), finishReason: "", ms, error: `HTTP ${res.status}`, request: body };
+        // errorBody is the truncated excerpt surfaced as `raw`; `response` keeps the
+        // full body so verbose logging honours "full response received" (ADR-0010).
+        return { ok: false, content: "", errorBody: text.slice(0, 300), finishReason: "", ms, error: `HTTP ${res.status}`, request: body, response: text };
       }
       const json = (await res.json()) as {
         choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;

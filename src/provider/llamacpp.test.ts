@@ -243,17 +243,19 @@ describe("createLlamaCppProvider", () => {
     expect(events[0]!.response).toMatchObject({ choices: [{ message: { content: "grug say hi" } }] });
   });
 
-  it("at Debug, surfaces the request and error body on a failed call", async () => {
+  it("at Debug, surfaces the request and the full (untruncated) error body on a failed call", async () => {
+    const longBody = "boom-".repeat(100); // 500 chars — past the 300-char `raw` excerpt
     const { events, logger } = recording(LogLevel.Debug);
     const provider = createLlamaCppProvider({
       baseUrl: "http://h/v1",
       model: "m",
-      fetchImpl: (async () => new Response("upstream boom", { status: 500 })) as unknown as typeof fetch,
+      fetchImpl: (async () => new Response(longBody, { status: 500 })) as unknown as typeof fetch,
       logger,
     });
-    await provider.decide({ user: "x", grammar: GRAMMAR });
+    const result = await provider.decide({ user: "x", grammar: GRAMMAR });
 
     expect(events[0]!.request).toMatchObject({ model: "m" });
-    expect(events[0]!.response).toBe("upstream boom"); // no JSON body; the error excerpt stands in
+    expect(events[0]!.response).toBe(longBody); // verbose gets the whole body
+    expect(result.raw.length).toBe(300); // the user-facing excerpt stays truncated
   });
 });

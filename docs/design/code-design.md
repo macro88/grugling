@@ -167,7 +167,7 @@ skeleton is small but already the right shape.
 | **Prompt assembly** `prompt.ts` 🟢 | `assembleSystem(...slots) → string`. | Fixed-order joining, empty-slot dropping, trimming — the "no growing transcript" discipline (ADR-0006). | Shallow-but-correct: a deliberate single choke point so every call-site assembles prompts the same way. |
 | **Config** `config.ts` 🟢 | `loadConfig() → ResolvedConfig`; pure `resolveConfig(file, env)` underneath. | Precedence (defaults < profile < env), YAML parse, missing-file tolerance, env coercion/validation (numbers *and* booleans). | **Deep**, and split at an IO seam: the precedence logic is pure and trivially testable. |
 | **Soul** `soul.ts` 🟢 | `loadSoul() → string`. | The single `SOUL.md` location; a loud error when absent (no silent empty persona). | Shallow-but-correct: the one place the persona file is read. |
-| **Logger** `logger.ts` 🟢 | `log(event)`. | JSONL serialisation; stderr-vs-injected sink (keeps stdout clean for the CLI result). | Shallow-but-correct: a one-method choke point, by design — it is also the first **Hook**. |
+| **Logger** `logger.ts` 🟢 | `log(level, event)` + `isEnabled(level)` + `debug/info/warn/error` wrappers, over a pluggable `LogSink`. | Severity levels, the minimum-level filter, JSONL serialisation + the `level` field, stderr-vs-injected sink (keeps stdout clean for the CLI result). | **Deep-ish.** A small leveled interface over a swappable sink — the seam for a structured-log backend and the redaction hook (ADR-0010); also the first **Hook**. |
 
 **Seam discipline** (one adapter = hypothetical seam; two = real):
 
@@ -179,7 +179,7 @@ skeleton is small but already the right shape.
 - The **`fetchImpl` parameter** in the llama.cpp adapter is an *internal* seam —
   private to the adapter, used only by its own tests. It is correctly **not**
   exposed through the Provider interface.
-- The **Logger** is a seam with an injectable `write` sink, again for tests.
+- The **Logger** is a seam with a pluggable `LogSink` port (default JSONL-to-stderr) — the choke point a future redaction hook will sit behind (ADR-0010); the sink's `write` is also injectable for tests.
 
 The **deletion test** confirms the shapes earn their keep: delete the Provider
 port and every call-site would hand-roll HTTP, timeouts, grammar wiring, and the
