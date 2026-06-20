@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DecideArgs, DecideResult, GenerateArgs, GenerateResult, Provider } from "../provider/provider.ts";
-import type { LogEvent } from "../logging/logger.ts";
+import { createLogger, type LogEvent } from "../logging/logger.ts";
 import { createRegistry } from "../tools/registry.ts";
 import { createNowTool } from "../tools/now.ts";
 import { createDeterministicCompressor } from "./compress.ts";
@@ -96,7 +96,7 @@ describe("handleMessage", () => {
     const garbled: DecideResult<DecideValue> = { ok: true, conformant: false, value: null, raw: '"banana"', ms: 1 };
     const { provider, generateCalls } = scriptedProvider({ route: route("task"), decides: [garbled] });
 
-    const result = await handleMessage(provider, "what time is it", options({ logger: { log: (e) => events.push(e) } }));
+    const result = await handleMessage(provider, "what time is it", options({ logger: createLogger({ sink: { write: (_l, e) => events.push(e) } }) }));
 
     expect(result).toMatchObject({ kind: "task", fallback: true });
     expect(generateCalls).toHaveLength(0); // not voiced as a normal reply

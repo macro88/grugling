@@ -53,7 +53,7 @@ export async function runDecisionLoop(provider: Provider, opts: LoopOptions): Pr
     if (!d.conformant || d.value === null) {
       // Fallback ladder rung 3: treat-as-answer, logged as a failure — visible,
       // never a silent chat reply (ADR-0002).
-      opts.logger?.log({ event: "fallback", callSite: "decide", reason: "non-conformant decision", raw: d.raw, decideCall: decideCalls });
+      opts.logger?.warn({ event: "fallback", callSite: "decide", reason: "non-conformant decision", raw: d.raw, decideCall: decideCalls });
       return { kind: "fallback", facts, raws, decideCalls, raw: d.raw };
     }
 
@@ -70,7 +70,7 @@ export async function runDecisionLoop(provider: Provider, opts: LoopOptions): Pr
     // 4); until it exists the loop fails closed rather than feed untrusted
     // content to a tool-bearing Decide call.
     if (envelope.trust === "untrusted") {
-      opts.logger?.log({ event: "trust_boundary", tool: value.tool, action: "blocked" });
+      opts.logger?.error({ event: "trust_boundary", tool: value.tool, action: "blocked" });
       return { kind: "blocked", tool: value.tool, facts, raws, decideCalls };
     }
 
@@ -79,7 +79,7 @@ export async function runDecisionLoop(provider: Provider, opts: LoopOptions): Pr
     raws.push({ pointer: rawPointer, tool: value.tool, raw: envelope.raw });
     facts.push({ tool: value.tool, args: value.args, ok: envelope.ok, summary, trust: envelope.trust, rawPointer });
 
-    opts.logger?.log({
+    opts.logger?.info({
       event: "tool_call",
       tool: value.tool,
       ok: envelope.ok,
