@@ -17,19 +17,20 @@ already say it well, this links rather than repeats:
 
 ## How to read the status tags
 
-Grugling is being built riskiest-thing-first, so most of the design exists on
+Grugling is being built riskiest-thing-first, so some of the design exists on
 paper before it exists in `src/`. Every structural claim below is tagged:
 
-- 🟢 **Built** — code exists in `src/` today (slices 1–2).
+- 🟢 **Built** — code exists in `src/` today (slices 1–3).
 - 🟡 **Designed** — specified in the ADRs/PRD/ARCHITECTURE, not yet coded.
 
-The honest summary: **the Provider seam and the conversation entry path
-(Route → chat → Voice, with fixed-slot prompt assembly and the editable SOUL
-persona) are built; the task Decision loop, the tool/skill/hook machinery, the
-remaining ports, and all persistence are designed.** Slices 1–2 prove the two
-riskiest bets — that a tiny local model returns a schema-conformant decision, and
-that a chat round-trips through a terse persona reply — through the exact seams
-everything else hangs off.
+The honest summary: **the Provider seam, the conversation entry path, and the
+bounded trusted-task path are built: Route → Decide → tool → compression →
+Voice, with fixed-slot prompt assembly, the editable SOUL persona, the tool
+registry, the compressor, and one trusted read-only `now` tool.** Skills,
+untrusted-content distillation, the remaining ports, and all persistence are
+still designed. Slices 1–3 prove the riskiest seams — schema-conformant
+decisions, a terse persona reply, and a bounded task loop that gathers facts
+before Voice speaks — through the exact interfaces everything else hangs off.
 
 ---
 
@@ -79,15 +80,23 @@ src/
 ├── provider/
 │   ├── provider.ts         🟢 the Provider PORT  (decide() + generate(); their Args/Result types)
 │   ├── llamacpp.ts         🟢 the first ADAPTER  (OpenAI-compatible HTTP → llama.cpp, top-level GBNF)
-│   ├── gbnf.ts             🟢 schema → GBNF compiler (closed-enum decisions only, for now)
+│   ├── gbnf.ts             🟢 schema → GBNF compiler (Route enums + Decide tool args)
 │   └── *.test.ts           🟢 adapter + compiler tests
 ├── harness/
-│   ├── pipeline.ts         🟢 the per-message pipeline: Route → chat=Voice | task=stub
+│   ├── pipeline.ts         🟢 the per-message pipeline: Route → chat=Voice | task=Decide loop → Voice
 │   ├── route.ts            🟢 the Route call-site (chat | task) — constrained decision
 │   ├── voice.ts            🟢 the Voice call-site — free-text persona reply (generate())
+│   ├── decide.ts           🟢 the Decide call-site (tool + args | finish) — constrained decision
+│   ├── loop.ts             🟢 the bounded task loop: Decide → tool → compress → facts
+│   ├── compress.ts         🟢 deterministic compression port + MVP adapter
 │   ├── prompt.ts           🟢 fixed-slot prompt assembly (assembleSystem)
 │   ├── soul.ts             🟢 loads the editable SOUL.md persona
 │   └── *.test.ts           🟢 drive the pipeline through a scripted fake Provider
+├── tools/
+│   ├── tool.ts             🟢 uniform Tool contract + result envelope
+│   ├── registry.ts         🟢 flat name-keyed tool registry
+│   ├── now.ts              🟢 trusted read-only date/time tool
+│   └── *.test.ts           🟢 tool contract + registry behaviour
 ├── config/
 │   ├── config.ts           🟢 profile loader: defaults < file profile < env
 │   └── config.test.ts
@@ -138,9 +147,9 @@ edits the Harness:
 
 ```
 src/
-├── harness/                🟡 + decide loop, voice, prompt assembly (fixed-slot)
-├── provider/               🟢 (richer gbnf: tool-input schemas, not just enums)
-├── tools/                  🟡 tool registry + result envelope + read-only tools
+├── harness/                🟢 Route/Voice/Decide loop + compression; trust distillation still to add
+├── provider/               🟢 (enum-object schemas for Route + Decide tool args)
+├── tools/                  🟢 tool registry + result envelope + trusted read-only tools
 ├── skills/                 🟡 skill loader + progressive-disclosure index
 ├── memory/                 🟡 Memory port + grep/markdown adapter (core / recall)
 ├── sessions/               🟡 session store, conversation history, compaction
@@ -162,8 +171,11 @@ skeleton is small but already the right shape.
 |---|---|---|---|
 | **Provider** `provider.ts` 🟢 | Two verbs: `decide(args)` (constrained decision) and `generate(args)` (free-text reply). Inputs are *per-call* (`user`, `grammar` or `temperature`, `system?`); `baseUrl`/`model`/`reasoning` bind at construction. | HTTP transport, timeout/abort, the GBNF constraint mechanism, the fallback ladder, JSON repair, reasoning-disable, truncation detection, metrics logging. | **Deep.** A caller learns two verbs and gets reliable structured decisions *and* persona replies. |
 | **schema→GBNF compiler** `gbnf.ts` 🟢 | `enumDecisionSchema(...)` + `compileToGbnf(schema) → string`. | GBNF rule-name rules (the `_`-invalidates-the-grammar trap), JSON-literal escaping, root-rule assembly. | **Deep.** Callers describe a decision shape; grammar generation is none of their business. |
-| **Pipeline** `pipeline.ts` 🟢 | `handleMessage(provider, message, opts) → result`. | Route→branch orchestration, error surfacing (route/voice failures never become silent chat), the task stub seam. | **Deep.** One entry point hides the whole per-message flow; the CLI and (future) daemon share it. |
+| **Pipeline** `pipeline.ts` 🟢 | `handleMessage(provider, message, opts) → result`. | Route→branch orchestration, Decide-loop delegation, fallback/trust-boundary surfacing, and Voice handoff. | **Deep.** One entry point hides the whole per-message flow; the CLI and (future) daemon share it. |
 | **Voice** `voice.ts` 🟢 | `voice(provider, {soul, message, maxTokens, temperature})`. | Fixed-slot assembly of the persona + per-call-site fragment; the free-text `generate` call. | **Deep-ish.** The persona call-site behind one function; SOUL handling is its business, not the pipeline's. |
+| **Decision loop** `decide.ts` + `loop.ts` 🟢 | `runDecisionLoop(provider, {registry, message, cap, compressor, ...})`. | Decide grammar assembly from in-scope tools, iteration capping, fallback surfacing, raw-output retention, trusted-output compression, and fact accumulation. | **Deep.** The harness learns only "run the bounded loop"; the task mechanics stay local. |
+| **Tool registry** `registry.ts` + `tool.ts` 🟢 | `createRegistry(tools)` plus a uniform `Tool` contract. | Duplicate-name rejection, tool lookup/listing, and the seam between Decide grammar generation and deterministic execution. | **Deep-ish.** Callers work with names and schemas, not ad hoc capability wiring. |
+| **Compression** `compress.ts` 🟢 | `compress(raw) → summary`. | Head/tail retention, error-line surfacing, and character-capping of noisy tool output. | **Deep-ish.** The loop gets compact facts without embedding compression policy. |
 | **Prompt assembly** `prompt.ts` 🟢 | `assembleSystem(...slots) → string`. | Fixed-order joining, empty-slot dropping, trimming — the "no growing transcript" discipline (ADR-0006). | Shallow-but-correct: a deliberate single choke point so every call-site assembles prompts the same way. |
 | **Config** `config.ts` 🟢 | `loadConfig() → ResolvedConfig`; pure `resolveConfig(file, env)` underneath. | Precedence (defaults < profile < env), YAML parse, missing-file tolerance, env coercion/validation (numbers *and* booleans). | **Deep**, and split at an IO seam: the precedence logic is pure and trivially testable. |
 | **Soul** `soul.ts` 🟢 | `loadSoul() → string`. | The single `SOUL.md` location; a loud error when absent (no silent empty persona). | Shallow-but-correct: the one place the persona file is read. |
@@ -252,14 +264,14 @@ sequenceDiagram
         H->>P: Voice — turn intent into reply (SOUL.md)  🟢
         P-->>H: reply text
     else route = task
-        loop until "finish" or cap (bounded)  🟡
+        loop until "finish" or cap (bounded)  🟢
             H->>P: Decide — pick a tool + args | finish  (grammar = in-scope tools)
             P-->>H: decision (FACTS only, never prose)
             H->>T: execute(tool, args)
-            T-->>H: result envelope (ok, summary, raw-pointer, trust tag)
-            Note over H: compress raw output → trust-gate → append fact
+            T-->>H: result envelope (ok, raw, trust tag)
+            Note over H: compress trusted raw output → append fact
         end
-        H->>P: Voice — turn accumulated facts into reply (SOUL.md)  🟡
+        H->>P: Voice — turn accumulated facts into reply (SOUL.md)  🟢
         P-->>H: reply text
     end
     H-->>User: reply (the ONLY user-facing emission)
@@ -285,7 +297,7 @@ A call-site is a place the Harness invokes the model: a freshly assembled prompt
 | Call-site | Decision | Output | Grammar source | Status |
 |---|---|---|---|---|
 | **Route** | chat or task? | `{ route }` | fixed enum | 🟢 |
-| **Decide** | call a tool (with args) or finish | tool name + args, or `finish` | the **selected skill's in-scope tool input schemas** | 🟡 |
+| **Decide** | call a tool (with args) or finish | tool name + args, or `finish` | the **in-scope tool input schemas** in the registry | 🟢 |
 | **Voice** | free-text reply | prose | unconstrained (the one free-text site) | 🟢 |
 | **Summarise / extract** | distil untrusted content to facts | facts | the **tool-less** trust-boundary site (§3.6) | 🟡 |
 | **Compact** | shrink running conversation | summary | conversation regime only | 🟡 |
@@ -310,7 +322,7 @@ depends on an optional adapter — there is always a dumb fallback** (ADR-0001).
 |---|---|---|---|---|
 | **Provider** | "return a decision matching this grammar" *and* "return a free-text reply" | OpenAI-compatible HTTP + GBNF, with model-side reasoning disabled by default | other backends | 🟢 |
 | **Memory** | "facts relevant to this context" (`core()` + `recall(query)`) | grep over markdown + index | SQL / vectors / semantic | 🟡 |
-| **Compression** | shrink *one tool's* output before context | deterministic (head/tail/grep/cap) | RTK, model-based | 🟡 |
+| **Compression** | shrink *one tool's* output before context | deterministic (head/tail/error-line/cap) | RTK, model-based | 🟢 |
 | **Compaction** | shrink the *running conversation* near budget | model-summarise; truncate fallback | smarter strategies | 🟡 |
 | **Messaging** | reply *and* initiate to the user | Telegram | other channels | 🟡 |
 
@@ -321,38 +333,37 @@ happens to work — e.g. `recall` returns "facts relevant to this context", not
 ### 3.5 Tools and Skills (how capabilities are added) 🟡
 
 This is the contributor's extension surface — **capabilities grow by drop-in,
-never by editing the Harness**.
+never by editing the Harness**. The registry, contract, and one trusted read-only
+tool are built today; skill narrowing remains designed.
 
 **Tool** — a single deterministic capability with a uniform contract:
 
 ```ts
-// designed shape (PRD § Implementation Decisions)
 interface Tool {
   name: string;
   description: string;
-  inputSchema: Schema;                       // → fed to the schema→GBNF compiler
-  execute(args): ResultEnvelope;             // deterministic
+  inputSchema: EnumDecisionSchema;           // closed enum-object args for MVP
   meta: {
-    trust: "trusted" | "untrusted";          // gates the trust boundary (§3.6)
-    risk: ...;
+    trust: "trusted" | "untrusted";
+    risk: "low" | "medium" | "high";
     needsConfirmation?: boolean;             // declared, not implemented in MVP
     longRunning?: boolean;                   // declared, not implemented in MVP
   };
+  execute(args: Record<string, string>): ResultEnvelope | Promise<ResultEnvelope>;
 }
 
 interface ResultEnvelope {
-  ok: boolean;                               // / exit status
-  summary: string;                           // short, model-facing
-  keyLines: string[];
-  rawPointer: string;                        // full output preserved OUTSIDE context
+  ok: boolean;                               // tool succeeded / exited cleanly
+  raw: string;                               // full output, preserved out-of-context
   trust: "trusted" | "untrusted";
 }
 ```
 
 The crucial coupling: **the in-scope tools' `inputSchema`s are what generate the
 Decide grammar.** Adding a tool needs no separate grammar work — the schema *is*
-the grammar source. This is why `gbnf.ts` is built first and grows from
-closed-enums toward full tool-input schemas.
+the grammar source. In the current MVP slice those schemas are still
+closed-enum JSON objects, which is enough to prove "pick a tool with args"
+end-to-end via the built `now` tool.
 
 **Skill** — a bundle of instructions + a *narrowed* tool set + optional scripts,
 with **progressive disclosure** (ADR-0004): only skill names + one-line
@@ -376,7 +387,7 @@ rest are designed:
 
 | Hook | Fires when | Used for | Status |
 |---|---|---|---|
-| **logging** | every model call (later: tool call) | structured JSONL; headline = constraint-conformance rate. Each event also carries `ms`, `finishReason`, prompt/completion/cached tokens, and tokens/sec — latency + context-budget pressure (user stories 19–21) | 🟢 |
+| **logging** | every model call and loop tool call | structured JSONL; headline = constraint-conformance rate. Each event also carries `ms`, `finishReason`, prompt/completion/cached tokens, tokens/sec, and tool-call compression stats — latency + context-budget pressure (user stories 19–21) | 🟢 |
 | **redaction** | content enters context *or* logs | scrub secrets — one choke point for both (ADR-0008) | 🟡 |
 | **postToolUse** | after a tool runs | compression, instrumentation | 🟡 |
 | **contextPressure** | running context nears the budget | trigger Compaction | 🟡 |
@@ -421,17 +432,21 @@ Four nested lifecycles, from longest-lived to shortest.
 
 One inbound message → the pipeline in §3.2 → one reply. Cost: a chat is **2**
 model calls (Route, Voice) — **built** 🟢; a task is **Route + Decide×N + Voice**
-— **designed** 🟡. Accepted trade-off (ADR-0003): each call is small, constrained,
-and reliable, which matters more than round-trips on local inference. (Spike:
+— **built for trusted tools** 🟢. Accepted trade-off (ADR-0003): each call is
+small, constrained, and reliable, which matters more than round-trips on local
+inference. (Spike:
 ~0.8–1.3 s/call; observed on the reference box with reasoning **off**, Route
 ~1–2.7 s and Voice ~1 s — with model-side reasoning *on*, a single call ran ~10 s
 and silently overran the reply budget, which is why reasoning is disabled by
 default — ADR-0009.)
 
-### 4.3 Decision-loop iteration 🟡
+### 4.3 Decision-loop iteration 🟢
 
 The bounded, stateless loop inside a task. It holds no conversation — each
-iteration is one constrained decision followed by one deterministic action:
+iteration is one constrained decision followed by one deterministic action. The
+loop itself is built; the still-designed part is the tool-less distillation step
+for untrusted outputs, so the current implementation fails closed when a tool
+declares `trust: "untrusted"`:
 
 ```mermaid
 flowchart TD
@@ -441,9 +456,8 @@ flowchart TD
   decide -->|tool + args| exec["execute tool → result envelope"]
   exec --> compress["compress raw output<br/>(postToolUse hook)"]
   compress --> gate{trust tag?}
-  gate -->|untrusted| distil["tool-less summarise<br/>(trust boundary)"]
+  gate -->|untrusted| blocked["block: trust boundary<br/>(current behaviour)"]
   gate -->|trusted| fact
-  distil --> fact["append distilled FACT"]
   fact --> cap{cap reached?}
   cap -->|no| assemble
   cap -->|yes| voice
@@ -557,16 +571,16 @@ Mapped to the [ARCHITECTURE.md](../../ARCHITECTURE.md) build order:
 | # | Step | Status |
 |---|---|---|
 | 1 | Provider adapter + constrained decoding (GBNF) | 🟢 Built |
-| 2 | Fixed-slot assembly + Route + Voice | 🟢 Built (chat path; task→Voice lands with the Decide loop) |
-| 3 | Tool registry + result envelope + read-only tool + Decide loop | 🟡 Designed |
+| 2 | Fixed-slot assembly + Route + Voice | 🟢 Built (shared chat/task Voice call-site) |
+| 3 | Tool registry + result envelope + read-only tool + Decide loop | 🟢 Built |
 | 4 | Skill loader + progressive disclosure + summarise-link (trust boundary) | 🟡 Designed |
 | 5 | Memory port + grep/markdown adapter | 🟡 Designed |
 | 6 | Daemon + sessions + conversation store + ticker | 🟡 Designed |
 | 7 | Messaging port + Telegram adapter | 🟡 Designed |
 | 8 | Scheduler (user jobs) | 🟡 Designed |
-| 9 | Hooks wired end-to-end (compression, redaction, logging, instrumentation) | 🟡 Logging built (with token/latency metrics); rest designed |
+| 9 | Hooks wired end-to-end (compression, redaction, logging, instrumentation) | 🟡 Compression port + logging built; hook registry/redaction/task hooks designed |
 
-Slices 1–2 deliberately implement the *riskiest* path end-to-end — config →
-Provider port → GBNF constraint → Route → chat → SOUL persona reply → logged
-result — so the seams every later step depends on are proven before the system is
-built outward.
+Slices 1–3 deliberately implement the *riskiest* paths end-to-end — config →
+Provider port → GBNF constraint → Route → chat/task → trusted facts → SOUL
+persona reply → logged result — so the seams every later step depends on are
+proven before the system is built outward.
