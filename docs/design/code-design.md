@@ -137,7 +137,7 @@ Note what the Harness (`pipeline.ts`, `route.ts`, `voice.ts`) depends on: the
 assembler** (`prompt.ts`). It never imports `llamacpp.ts`. Only the composition
 root (`cli.ts`) knows which adapter is real — and binds the soul, logger, and
 config into it. That is the whole ports-and-adapters discipline (ADR-0001), and
-it is load-bearing across both built slices.
+it is load-bearing across the built slices.
 
 ### 2.2 Where it grows 🟡
 
@@ -220,7 +220,7 @@ C4Container
     Container(daemon, "Daemon", "Node/TS", "Hosts listener + ticker + harness (designed)")
     Container(harness, "Harness", "TS", "Owns the loop, state, context budget; orchestrates ports")
     Container(provider, "Provider adapter", "TS + HTTP", "Constrained decoding via GBNF")
-    Container(tools, "Tool registry", "TS", "Uniform-contract capabilities (designed)")
+    Container(tools, "Tool registry", "TS", "Uniform-contract capabilities (built)")
     Container(skills, "Skill loader", "TS", "Progressive disclosure (designed)")
     ContainerDb(store, "On-disk state", "JSON + markdown", "Sessions, history, memory (designed)")
   }
@@ -241,7 +241,7 @@ The CLI is standalone today; the daemon hosting is out of scope for the current
 build but the seam is the same `route()`/harness entry, so the split costs
 nothing structurally.
 
-### 3.2 The per-message pipeline (lifecycle of one request) 🟡
+### 3.2 The per-message pipeline (lifecycle of one request) 🟢
 
 Two regimes meet in one flow (ADR-0003): a stateful **conversation** (persona,
 history) wraps a stateless **decision loop** (tools, no history). The model is
