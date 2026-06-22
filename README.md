@@ -9,9 +9,12 @@ design (structure, pipeline, lifecycles), and
 
 ## Status
 
-Slice 2 — the conversation entry path: a message is **Routed** (chat | task,
+Build-order steps 1–3 are on `main`: a message is **Routed** (chat | task,
 GBNF-constrained). Chat flows to **Voice**, which replies in the editable
-`SOUL.md` persona; the task branch is stubbed until the Decide loop lands.
+`SOUL.md` persona; a task runs the bounded **Decide** loop with the registered
+trusted `now` tool, then **Voice** turns the gathered facts into the reply.
+Skill selection, untrusted-content distillation, persistence, and
+daemon/messaging pieces are still designed only.
 
 ## Requirements
 
@@ -25,12 +28,12 @@ GBNF-constrained). Chat flows to **Voice**, which replies in the editable
 ```sh
 pnpm install
 pnpm grugling "hello there"        # → a terse grug reply (chat → Voice)
-pnpm grugling "summarise https://example.com"   # → task stub (Decide loop not built yet)
+pnpm grugling "what time is it"    # → task path (Route → Decide(now) → Voice)
 ```
 
-The reply goes to stdout; one structured `model_call` event per model call is
-written to stderr (JSONL). The persona lives in the editable `SOUL.md`, injected
-only at Voice.
+The reply goes to stdout; structured JSONL events are written to stderr
+(`model_call`, `tool_call`, and visible fallback/trust-boundary events). The
+persona lives in the editable `SOUL.md`, injected only at Voice.
 
 ## Configure
 

@@ -1,10 +1,11 @@
 # Core Router MVP — PRD
 
-> **Status:** ready-for-agent · **Tracking issue:** [macro88/grugling#1](https://github.com/macro88/grugling/issues/1)
-> **Scope:** build-order steps 1–4 in [ARCHITECTURE.md](../../ARCHITECTURE.md) — the command-line increment that proves the core thesis.
+> **Status:** partially built on `main` · **Tracking issue:** [macro88/grugling#1](https://github.com/macro88/grugling/issues/1)
+> **Scope:** target build-order steps 1–4 in [ARCHITECTURE.md](../../ARCHITECTURE.md) — the command-line increment that proves the core thesis.
 > **Vocabulary:** [CONTEXT.md](../../CONTEXT.md). **Rationale:** [ADRs](../adr/) 0001–0009.
 >
 > This doc is the canonical PRD. The tracking issue is an index into it; an implementing agent should read this doc plus that issue.
+> The current implementation has steps 1–3 only: Provider + constrained decoding, fixed-slot Route/Voice, deterministic compression, the tool registry, and one trusted `now` tool running through the bounded Decide loop. Skill loading / progressive disclosure and the `summarise-link` / `system-health` skills remain unbuilt.
 
 ## Problem Statement
 
@@ -14,7 +15,7 @@ As a developer, I have spare/old laptops and can run a small local LLM, but a sm
 
 A brutally simple command-line agent — the **Harness** — that treats the small model as a **Router/planner, not the Worker**. The developer issues a request from the CLI; the Harness classifies it (**Route**) as chat or task. Chat goes straight to a terse persona reply (**Voice**). A task enters a bounded **Decision loop**: at each step the model makes one **constrained-decoding** choice — pick a **Tool** (from the selected **Skill**'s narrowed set) or finish — and the Harness executes it deterministically, compresses the result, and loops (capped). The loop produces *facts*; **Voice** turns them into the reply. New capabilities are added by dropping in a **Skill**, never by editing the Harness. Everything runs against the developer's local OpenAI-compatible model.
 
-The MVP ships two Skills: **summarise-link** (fetch a URL → distil to a short summary, demonstrating the **trust boundary**) and **system-health** (read-only local commands → a short health summary).
+The target MVP adds two Skills: **summarise-link** (fetch a URL → distil to a short summary, demonstrating the **trust boundary**) and **system-health** (read-only local commands → a short health summary).
 
 ## User Stories
 
@@ -56,13 +57,13 @@ The MVP ships two Skills: **summarise-link** (fetch a URL → distil to a short 
 - **Provider port** with an **OpenAI-compatible HTTP adapter**. Core method: "return a decision/text conforming to this schema." Implements **constrained decoding via GBNF** (llama.cpp top-level `grammar`). The router spike found `response_format.json_schema`, llama.cpp `json_schema`, and `json_object` all return **empty** on the target build, so JSON-schema is **not** a usable constraint path; the adapter needs a **schema→GBNF compiler** to turn in-scope tool input schemas into grammars. Fallback ladder: constrain → parse-and-repair → treat-as-answer (the last logged as a failure, never silent). The free-text **Voice** reply is the deliberate exception — a separate `generate` path with no grammar (ADR-0003). **Model-side reasoning is disabled by default** so a "thinking" model cannot consume the output budget before emitting the reply or the constrained token (ADR-0009). Re-probe LM Studio before assuming parity. Per ADR-0002. (Shape seeded by the spike's `provider.ts`.)
 - **Harness core**: the per-message pipeline **Route → Decide (bounded loop) → Voice** (ADR-0003) with **fixed-slot prompt assembly** — each call freshly built from bounded slots, no growing transcript. Decide emits *facts*; Voice emits the user-facing reply.
 - **Tool registry + Tool contract**: every Tool exposes name, description, input schema, `execute → result envelope`, and declarative metadata (`trust`, `risk`; forward-compatible `needsConfirmation` / `longRunning` declared but not implemented). The in-scope tools' input schemas generate the constrained-decoding grammar (ADR-0001, 0002).
-- **Result envelope**: uniform across tools — ok/exit, short summary, key lines, a pointer to full raw output, and a **`trust`** tag.
-- **Skill loader + progressive disclosure** (ADR-0004): only Skill names + one-line descriptions sit in context; selecting a Skill loads its instructions and narrows the in-scope tools (smaller grammar → higher reliability). A "general" default Skill covers chat / unscoped requests.
+- **Result envelope**: uniform across tools — `{ ok, raw, trust }`. The bounded Decide loop preserves the full raw output out of context, compresses it into the model-facing fact summary, and records the raw pointer on that fact.
+- **Skill loader + progressive disclosure** (ADR-0004): target step 4. Only Skill names + one-line descriptions will sit in context; selecting a Skill will load its instructions and narrow the in-scope tools (smaller grammar → higher reliability). A "general" default Skill will cover chat / unscoped requests.
 - **Compression** behind an interface; the MVP adapter is deterministic (head/tail, error-grep, char cap). RTK is a future backend, not wired here.
 - **Persona**: a single editable `SOUL.md` injected only at Voice; other call-sites use minimal per-call-site fragments; **no global system prompt** (ADR-0006).
 - **Config loader**: a profile-based file (base URL, model, context budget, per-call-site token budgets, Voice temperature, model-side reasoning toggle, loop cap), hand-edited for MVP. Token budgets and temperature are sized to the host, never hardcoded.
 - **Logging hook**: emits structured events (call-site, tokens, latency, schema, conformance/fallback, tool name + trust). Headline metric: **conformance rate**.
-- **Trust boundary (ADR-0005)**: untrusted tool output is only ever fed to a **tool-less** call-site (a summarise/extract step). Decide only ever ingests distilled facts, never raw untrusted content; the Harness enforces this off the result's `trust` tag.
+- **Trust boundary (ADR-0005)**: current code fails closed on untrusted tool output off the result's `trust` tag. The target step-4 shape feeds untrusted content only to a **tool-less** summarise/extract call-site, so Decide only ever ingests distilled facts, never raw untrusted content.
 - **Secrets (ADR-0008)**: tools wield secrets by handle; redaction keeps them out of model context and logs (in this CLI scope, primarily the use-don't-see principle + log redaction).
 - **Security posture (ADR-0007)**: autonomy by default; the environment is the capability boundary; confirmation is an optional policy, off in MVP.
 - **Decision contract**: a small closed set of decision types — at minimum `route` (chat | task), `decide` (call a tool with args | finish), `voice` (free text) — each its own schema at its own call-site.
@@ -72,7 +73,7 @@ The MVP ships two Skills: **summarise-link** (fetch a URL → distil to a short 
 
 - **Language / runtime:** TypeScript on **Node 24**, running `.ts` directly (native TS) — no build step for dev; `tsc --noEmit` for typecheck.
 - **Package manager:** pnpm.
-- **Layout:** a single pnpm package; modules under `src/` (`provider/`, `harness/`, `tools/`, `skills/`, `config/`, `logging/`); no workspace yet.
+- **Layout:** a single pnpm package; modules under `src/` (`provider/`, `harness/`, `tools/`, `config/`, `logging/`); no workspace yet. `skills/` is planned but not landed.
 - **Tests:** Vitest.
 - **CLI:** no arg-parsing framework — hand-rolled `process.argv`; revisit only if the command surface grows.
 - **Constrained decoding:** GBNF grammars via llama.cpp `grammar`, plus a schema→GBNF compiler (see Implementation Decisions and ADR-0002).
@@ -86,8 +87,8 @@ These are PRD constraints, not ADRs (reversible, conventional). The one ADR-leve
 - **What makes a good test**: asserts *external behaviour* — which Tools are dispatched and with what args, the final reply/result, that the trust boundary holds, that the loop cap is honoured, and that an unconstrainable response triggers the logged fallback. Never asserts internal call ordering or private structure.
 - **Primary seam — the Provider port**: tests inject a **scripted fake Provider** returning canned, schema-conforming decisions, making the whole Harness deterministic. A scripted sequence of decisions + tool results drives the pipeline; assertions are on outputs and effects.
 - **Supporting substitutions (existing ports, not new seams)**: **fake Tools registered in the registry** (assert dispatch + args; inject canned results with no real side effects); **captured output** for the final Voice text/result.
-- **Trust-boundary test**: register a fetch-style fake tool returning poisoned content plus an outward fake tool, then assert the outward tool is **never** dispatched as a result of the injected content (untrusted content only reaches the tool-less summarise call-site).
-- **Modules tested**: the Route→Decide→Voice pipeline, the bounded Decision loop (cap + fallback ladder), Skill selection + tool-narrowing, the Tool registry/contract, compression, and trust-boundary enforcement.
+- **Trust-boundary test**: register a fetch-style fake tool returning poisoned content plus an outward fake tool, then assert the outward tool is **never** dispatched as a result of the injected content. Current code blocks before a later Decide; the tool-less summarise call-site is future work.
+- **Modules tested**: the Route→Decide→Voice pipeline, the bounded Decision loop (cap + fallback ladder), the Tool registry/contract, compression, and trust-boundary enforcement. Skill selection + tool-narrowing land with step 4.
 - **Real-model coverage**: one thin, optional end-to-end smoke test against a live local model, plus the separate throwaway **spike** that measures conformance, routing accuracy, and latency. Routine tests do **not** hit the real model.
 - **Prior art**: none — greenfield. This PRD establishes the seam pattern (scripted Provider + registry fakes) for all later harness work.
 
