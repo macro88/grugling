@@ -40,8 +40,9 @@ persona lives in the editable `SOUL.md`, injected only at Voice.
 Copy `config.example.yaml` to `config.yaml` and edit, or override per-field with
 env vars (`GRUGLING_BASE_URL`, `GRUGLING_MODEL`, `GRUGLING_DECISION_MAX_TOKENS`,
 `GRUGLING_VOICE_MAX_TOKENS`, `GRUGLING_VOICE_TEMPERATURE`, `GRUGLING_REASONING`,
-`GRUGLING_CONTEXT_BUDGET`, `GRUGLING_PROFILE`, `GRUGLING_CONFIG`). Precedence:
-built-in defaults < selected profile in file < env.
+`GRUGLING_CONTEXT_BUDGET`, `GRUGLING_LOOP_CAP`, `GRUGLING_PROFILE`,
+`GRUGLING_CONFIG`). Precedence: built-in defaults < selected profile in file <
+env.
 
 Token budgets and Voice temperature are sized to your host, not hardcoded.
 Model-side reasoning ("thinking") is **off by default** — on a small model it
