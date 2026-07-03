@@ -388,7 +388,7 @@ emit tool/fallback/trust-boundary events); the rest are designed:
 
 | Hook | Fires when | Used for | Status |
 |---|---|---|---|
-| **logging** | every model call, plus tool/fallback/trust-boundary events | structured JSONL; headline = constraint-conformance rate. Each event also carries `ms`, `finishReason`, prompt/completion/cached tokens, and tokens/sec — latency + context-budget pressure (user stories 19–21) | 🟢 |
+| **logging** | every model call, plus tool/fallback/trust-boundary events | structured JSONL; headline = constraint-conformance rate. `model_call` events carry `ms`, `finishReason`, prompt/completion/cached tokens, and tokens/sec; tool/fallback/trust-boundary events carry their own loop/tool fields (user stories 19–21) | 🟢 |
 | **redaction** | content enters context *or* logs | scrub secrets — one choke point for both (ADR-0008) | 🟡 |
 | **postToolUse** | after a tool runs | compression, instrumentation | 🟡 |
 | **contextPressure** | running context nears the budget | trigger Compaction | 🟡 |
@@ -524,10 +524,11 @@ Profile fields are sized to the host (the dominant constraint is the context
 budget): `baseUrl`, `model`, `decisionMaxTokens` (tiny — Route/Decide),
 `voiceMaxTokens` (a free-text reply needs more room), `voiceTemperature` (0 =
 deterministic; the persona is the one site where >0 may help), `reasoning`
-(model-side thinking, default **false** — ADR-0009), and `contextBudget`. Token
-budgets and temperature are deliberately *not* constants in code: a 1B model on a
-Pi and a 200B model on a workstation want very different values (user story 18).
-Env coercion validates both numbers and booleans, failing loudly on garbage.
+(model-side thinking, default **false** — ADR-0009), `contextBudget`, and
+`loopCap` (max Decide iterations per task). Token budgets and temperature are
+deliberately *not* constants in code: a 1B model on a Pi and a 200B model on a
+workstation want very different values (user story 18). Env coercion validates
+both numbers and booleans, failing loudly on garbage.
 
 ---
 
