@@ -452,11 +452,11 @@ flowchart TD
   assemble --> decide{"Decide<br/>(grammar = in-scope tools)"}
   decide -->|finish| voice["→ Voice"]
   decide -->|tool + args| exec["execute tool → result envelope"]
-  exec --> compress["compress raw output<br/>(postToolUse hook)"]
+  exec --> compress["compress raw output<br/>(direct in loop today)"]
   compress --> gate{trust tag?}
   gate -->|untrusted| block["block and surface error<br/>(distillation call-site not built yet)"]
   gate -->|trusted| fact["append FACT + preserve raw pointer"]
-  block --> voice
+  block --> surface["surface Pipeline error"]
   fact --> cap{cap reached?}
   cap -->|no| assemble
   cap -->|yes| voice
