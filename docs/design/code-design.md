@@ -456,7 +456,6 @@ flowchart TD
   compress --> gate{trust tag?}
   gate -->|untrusted| block["block and surface error<br/>(distillation call-site not built yet)"]
   gate -->|trusted| fact["append FACT + preserve raw pointer"]
-  block --> voice
   fact --> cap{cap reached?}
   cap -->|no| assemble
   cap -->|yes| voice
