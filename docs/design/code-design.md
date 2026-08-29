@@ -456,7 +456,7 @@ flowchart TD
   compress --> gate{trust tag?}
   gate -->|untrusted| block["block and surface error<br/>(distillation call-site not built yet)"]
   gate -->|trusted| fact["append FACT + preserve raw pointer"]
-  block --> voice
+  block --> fail([surface task error])
   fact --> cap{cap reached?}
   cap -->|no| assemble
   cap -->|yes| voice
@@ -464,7 +464,9 @@ flowchart TD
 
 Two safety properties live here: the **cap** (a confused model cannot loop
 forever or burn the machine — configurable) and the **fallback ladder** at the
-Decide call (next section).
+Decide call (next section). An untrusted tool result exits the task as a
+surfaced error; it does not continue to Voice until the designed distillation
+call-site exists.
 
 ### 4.4 Constrained-decision lifecycle (the fallback ladder) 🟢 partial
 
@@ -524,10 +526,11 @@ Profile fields are sized to the host (the dominant constraint is the context
 budget): `baseUrl`, `model`, `decisionMaxTokens` (tiny — Route/Decide),
 `voiceMaxTokens` (a free-text reply needs more room), `voiceTemperature` (0 =
 deterministic; the persona is the one site where >0 may help), `reasoning`
-(model-side thinking, default **false** — ADR-0009), and `contextBudget`. Token
-budgets and temperature are deliberately *not* constants in code: a 1B model on a
-Pi and a 200B model on a workstation want very different values (user story 18).
-Env coercion validates both numbers and booleans, failing loudly on garbage.
+(model-side thinking, default **false** — ADR-0009), `contextBudget`, and
+`loopCap` (max Decide iterations per task). Token budgets and temperature are
+deliberately *not* constants in code: a 1B model on a Pi and a 200B model on a
+workstation want very different values (user story 18). Env coercion validates
+both numbers and booleans, failing loudly on garbage.
 
 ---
 
