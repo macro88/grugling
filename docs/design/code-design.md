@@ -341,7 +341,7 @@ interface Tool {
   name: string;
   description: string;
   inputSchema: EnumDecisionSchema;           // → fed to the schema→GBNF compiler
-  execute(args): ResultEnvelope;             // deterministic
+  execute(args): ResultEnvelope | Promise<ResultEnvelope>;
   meta: {
     trust: "trusted" | "untrusted";          // gates the trust boundary (§3.6)
     risk: "low" | "medium" | "high";
@@ -456,7 +456,7 @@ flowchart TD
   compress --> gate{trust tag?}
   gate -->|untrusted| block["block and surface error<br/>(distillation call-site not built yet)"]
   gate -->|trusted| fact["append FACT + preserve raw pointer"]
-  block --> voice
+  block --> err["surface pipeline error<br/>(no Voice reply)"]
   fact --> cap{cap reached?}
   cap -->|no| assemble
   cap -->|yes| voice
@@ -525,10 +525,10 @@ budget): `baseUrl`, `model`, `decisionMaxTokens` (tiny — Route/Decide),
 `voiceMaxTokens` (a free-text reply needs more room), `voiceTemperature` (0 =
 deterministic; the persona is the one site where >0 may help), `reasoning`
 (model-side thinking, default **false** — ADR-0009), `contextBudget`, and
-`loopCap` (max Decide iterations per task). Token budgets, loop cap, and
-temperature are deliberately *not* constants in code: a 1B model on a Pi and a
-200B model on a workstation want very different values (user story 18). Env
-coercion validates both numbers and booleans, failing loudly on garbage.
+`loopCap` (max Decide iterations per task). Token budgets and temperature are
+deliberately *not* constants in code: a 1B model on a Pi and a 200B model on a
+workstation want very different values (user story 18). Env coercion validates
+both numbers and booleans, failing loudly on garbage.
 
 ---
 
