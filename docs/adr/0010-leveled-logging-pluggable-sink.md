@@ -8,16 +8,15 @@ wanted the log destination to be swappable (the terminal now, a structured-log
 backend later).
 
 We **adopt a deliberately small subset of the .NET `Microsoft.Extensions.Logging`
-shape**: a severity-ordered `LogLevel` value map (`Trace=0 … Critical=5,
-None=6`; implemented as an enum-shaped `const` object rather than a TS `enum`
-so it runs cleanly under Node's type-stripping runtime), a single
-**minimum-level filter**, an **`isEnabled(level)`** guard, and a **`LogSink`
-port** that receives the structured event (not a pre-formatted string).
-`--verbose` lowers the minimum level to `Debug`; the `model_call` event still
-logs at `Info` and is **enriched with the full request body and full server
-response only when `isEnabled(Debug)`** is true. Default minimum level is `Info`
-(today's behaviour — every metric line still prints); the default sink
-serialises `{ level, ...event }` as JSONL to stderr.
+shape**: a severity-ordered `LogLevel` value set (`Trace=0 … Critical=5, None=6`)
+implemented as an enum-shaped `const` map, a single **minimum-level filter**, an
+**`isEnabled(level)`** guard, and a **`LogSink` port** that receives the
+structured event (not a pre-formatted string). `--verbose` lowers the minimum
+level to `Debug`; the `model_call` event still logs at `Info` and is **enriched
+with the full request body and full server response only when `isEnabled(Debug)`**
+is true. Default minimum level is `Info` (today's behaviour — every metric line
+still prints); the default sink serialises `{ level, ...event }` as JSONL to
+stderr.
 
 We record this because the chosen scope is a deliberate trade-off:
 

@@ -514,12 +514,12 @@ is a separate concern that survives purge.
 
 ### 4.6 Config resolution lifecycle 🟢
 
-`loadConfig()` → pick `GRUGLING_CONFIG` or `./config.yaml` → read that file
-(tolerating ENOENT) → `resolveConfig(file, env)` applies strict precedence:
-**built-in defaults < selected profile in file < env vars**. Resolution is a
-pure function (IO-free), so the precedence logic is tested without touching the
-filesystem. A box is re-pointed at a different model by env var alone — no file
-edit, no code change.
+`loadConfig()` → resolve the path (`GRUGLING_CONFIG` or `./config.yaml`) → read
+that YAML file (tolerating ENOENT) → `resolveConfig(file, env)` applies strict
+precedence: **built-in defaults < selected profile in file < env vars**.
+Resolution is a pure function (IO-free), so the precedence logic is tested
+without touching the filesystem. A box is re-pointed at a different model by env
+var alone — no file edit, no code change.
 
 Profile fields are sized to the host (the dominant constraint is the context
 budget): `baseUrl`, `model`, `decisionMaxTokens` (tiny — Route/Decide),
