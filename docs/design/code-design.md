@@ -514,8 +514,8 @@ is a separate concern that survives purge.
 
 ### 4.6 Config resolution lifecycle 🟢
 
-`loadConfig()` → read `config.yaml` (or the `GRUGLING_CONFIG` override,
-tolerating ENOENT) → `resolveConfig(file, env)` applies strict precedence:
+`loadConfig()` → pick `GRUGLING_CONFIG` or `./config.yaml` → read that file
+(tolerating ENOENT) → `resolveConfig(file, env)` applies strict precedence:
 **built-in defaults < selected profile in file < env vars**. Resolution is a
 pure function (IO-free), so the precedence logic is tested without touching the
 filesystem. A box is re-pointed at a different model by env var alone — no file
@@ -526,10 +526,10 @@ budget): `baseUrl`, `model`, `decisionMaxTokens` (tiny — Route/Decide),
 `voiceMaxTokens` (a free-text reply needs more room), `voiceTemperature` (0 =
 deterministic; the persona is the one site where >0 may help), `reasoning`
 (model-side thinking, default **false** — ADR-0009), `contextBudget`, and
-`loopCap` (max Decide iterations per task). Token budgets, Voice temperature,
-and the loop cap are deliberately *not* constants in code: a 1B model on a Pi
-and a 200B model on a workstation want very different values (user story 18).
-Env coercion validates both numbers and booleans, failing loudly on garbage.
+`loopCap` (max Decide iterations per task). Token budgets and temperature are
+deliberately *not* constants in code: a 1B model on a Pi and a 200B model on a
+workstation want very different values (user story 18). Env coercion validates
+both numbers and booleans, failing loudly on garbage.
 
 ---
 
