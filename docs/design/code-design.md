@@ -267,7 +267,7 @@ sequenceDiagram
             P-->>H: decision (FACTS only, never prose)
             H->>T: execute(tool, args)
             T-->>H: result envelope (ok, raw, trust)
-            Note over H: compress raw output → trust-gate → append fact
+            Note over H: trust-gate → compress trusted raw output → append fact
         end
         H->>P: Voice — turn accumulated facts into reply (SOUL.md)  🟢
         P-->>H: reply text
@@ -341,7 +341,7 @@ interface Tool {
   name: string;
   description: string;
   inputSchema: EnumDecisionSchema;           // → fed to the schema→GBNF compiler
-  execute(args): ResultEnvelope;             // deterministic
+  execute(args): ResultEnvelope | Promise<ResultEnvelope>;
   meta: {
     trust: "trusted" | "untrusted";          // gates the trust boundary (§3.6)
     risk: "low" | "medium" | "high";
@@ -388,7 +388,7 @@ emit tool/fallback/trust-boundary events); the rest are designed:
 
 | Hook | Fires when | Used for | Status |
 |---|---|---|---|
-| **logging** | every model call, plus tool/fallback/trust-boundary events | structured JSONL; headline = constraint-conformance rate. Each event also carries `ms`, `finishReason`, prompt/completion/cached tokens, and tokens/sec — latency + context-budget pressure (user stories 19–21) | 🟢 |
+| **logging** | every model call, plus tool/fallback/trust-boundary events | structured JSONL; headline = constraint-conformance rate. `model_call` events carry `ms`, `finishReason`, prompt/completion/cached tokens, and tokens/sec; tool/fallback/trust-boundary events carry their own loop/tool fields (user stories 19–21) | 🟢 |
 | **redaction** | content enters context *or* logs | scrub secrets — one choke point for both (ADR-0008) | 🟡 |
 | **postToolUse** | after a tool runs | compression, instrumentation | 🟡 |
 | **contextPressure** | running context nears the budget | trigger Compaction | 🟡 |
@@ -452,11 +452,10 @@ flowchart TD
   assemble --> decide{"Decide<br/>(grammar = in-scope tools)"}
   decide -->|finish| voice["→ Voice"]
   decide -->|tool + args| exec["execute tool → result envelope"]
-  exec --> compress["compress raw output<br/>(postToolUse hook)"]
-  compress --> gate{trust tag?}
+  exec --> gate{trust tag?}
   gate -->|untrusted| block["block and surface error<br/>(distillation call-site not built yet)"]
   gate -->|trusted| fact["append FACT + preserve raw pointer"]
-  block --> voice
+  block --> fail([surface task error])
   fact --> cap{cap reached?}
   cap -->|no| assemble
   cap -->|yes| voice
@@ -464,7 +463,9 @@ flowchart TD
 
 Two safety properties live here: the **cap** (a confused model cannot loop
 forever or burn the machine — configurable) and the **fallback ladder** at the
-Decide call (next section).
+Decide call (next section). An untrusted tool result exits the task as a
+surfaced error; it does not continue to Voice until the designed distillation
+call-site exists.
 
 ### 4.4 Constrained-decision lifecycle (the fallback ladder) 🟢 partial
 
@@ -514,19 +515,21 @@ is a separate concern that survives purge.
 
 ### 4.6 Config resolution lifecycle 🟢
 
-`loadConfig()` → read `config.yaml` (tolerating ENOENT) → `resolveConfig(file,
-env)` applies strict precedence: **built-in defaults < selected profile in file <
-env vars**. Resolution is a pure function (IO-free), so the precedence logic is
-tested without touching the filesystem. A box is re-pointed at a different model
-by env var alone — no file edit, no code change.
+`loadConfig()` → resolve the path (`GRUGLING_CONFIG` or `./config.yaml`) → read
+that YAML file (tolerating ENOENT) → `resolveConfig(file, env)` applies strict
+precedence: **built-in defaults < selected profile in file < env vars**.
+Resolution is a pure function (IO-free), so the precedence logic is tested
+without touching the filesystem. A box is re-pointed at a different model by env
+var alone — no file edit, no code change.
 
 Profile fields are sized to the host (the dominant constraint is the context
 budget): `baseUrl`, `model`, `decisionMaxTokens` (tiny — Route/Decide),
 `voiceMaxTokens` (a free-text reply needs more room), `voiceTemperature` (0 =
 deterministic; the persona is the one site where >0 may help), `reasoning`
-(model-side thinking, default **false** — ADR-0009), and `contextBudget`. Token
-budgets and temperature are deliberately *not* constants in code: a 1B model on a
-Pi and a 200B model on a workstation want very different values (user story 18).
+(model-side thinking, default **false** — ADR-0009), `contextBudget`, and
+`loopCap` (the maximum Decide iterations per task). Token budgets, temperature,
+and the loop cap are deliberately *not* constants in code: a 1B model on a Pi
+and a 200B model on a workstation want very different values (user story 18).
 Env coercion validates both numbers and booleans, failing loudly on garbage.
 
 ---
