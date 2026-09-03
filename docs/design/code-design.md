@@ -525,10 +525,10 @@ budget): `baseUrl`, `model`, `decisionMaxTokens` (tiny — Route/Decide),
 `voiceMaxTokens` (a free-text reply needs more room), `voiceTemperature` (0 =
 deterministic; the persona is the one site where >0 may help), `reasoning`
 (model-side thinking, default **false** — ADR-0009), `contextBudget`, and
-`loopCap` (max Decide iterations per task). Token budgets and temperature are
-deliberately *not* constants in code: a 1B model on a Pi and a 200B model on a
-workstation want very different values (user story 18). Env coercion validates
-both numbers and booleans, failing loudly on garbage.
+`loopCap` (the max Decide iterations per task). Token budgets, the loop cap,
+and temperature are deliberately *not* constants in code: a 1B model on a Pi
+and a 200B model on a workstation want very different values (user story 18).
+Env coercion validates both numbers and booleans, failing loudly on garbage.
 
 ---
 
