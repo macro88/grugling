@@ -388,7 +388,7 @@ emit tool/fallback/trust-boundary events); the rest are designed:
 
 | Hook | Fires when | Used for | Status |
 |---|---|---|---|
-| **logging** | every model call, plus tool/fallback/trust-boundary events | structured JSONL; headline = constraint-conformance rate. Each event also carries `ms`, `finishReason`, prompt/completion/cached tokens, and tokens/sec — latency + context-budget pressure (user stories 19–21) | 🟢 |
+| **logging** | every model call, plus tool/fallback/trust-boundary events | structured JSONL; headline = constraint-conformance rate. `model_call` events carry `ms`, `finishReason`, prompt/completion/cached tokens, and tokens/sec; tool/fallback/trust-boundary events carry their own loop/tool fields (user stories 19–21) | 🟢 |
 | **redaction** | content enters context *or* logs | scrub secrets — one choke point for both (ADR-0008) | 🟡 |
 | **postToolUse** | after a tool runs | compression, instrumentation | 🟡 |
 | **contextPressure** | running context nears the budget | trigger Compaction | 🟡 |
