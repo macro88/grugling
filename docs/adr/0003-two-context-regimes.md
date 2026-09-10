@@ -12,7 +12,7 @@ conversational context, nor the persona by tool-calling mechanics.
 
 ## Consequences
 
-- A task message costs up to three model calls (Route, Decide×N, Voice) instead
+- A task message costs up to N + 2 model calls (Route, Decide×N, Voice) instead
   of one. Accepted: each call is small, constrained, and reliable, which matters
   more than round-trips on local inference.
 - Conversation history is ephemeral, scoped to a Session with a configurable
